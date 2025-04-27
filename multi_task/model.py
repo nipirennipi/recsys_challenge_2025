@@ -1,14 +1,165 @@
 import torch
 import pytorch_lightning as pl
+import logging
 from torch import nn, optim, Tensor
 from dataclasses import asdict
-from typing import Callable, List
+from typing import Callable, List, Tuple
 from multi_task.metric_calculators import (
     MetricCalculator,
 )
 from multi_task.metrics_containers import (
     MetricContainer,
 )
+from multi_task.constants import (
+    SKU_EMBEDDING_DIM,
+    CATEGORY_EMBEDDING_DIM,
+    EVENT_TYPE_EMBEDDING_DIM,
+    NAME_EMBEDDING_DIM,
+    LSTM_HIDDEN_SIZE,
+)
+from multi_task.utils import (
+    record_embeddings,
+)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(level=logging.INFO)
+
+
+class EmbeddingLayer(nn.Module):
+    """
+    Embedding layer for sku, category, and event type.
+    This layer creates separate embeddings for each input feature and concatenates them.
+
+    Args:
+        sku_vocab_size (int): Vocabulary size for sku embeddings.
+        category_vocab_size (int): Vocabulary size for category embeddings.
+        event_type_vocab_size (int): Vocabulary size for event type embeddings.
+        embedding_dim (int): Dimensionality of the embeddings.
+    """
+
+    def __init__(
+        self,
+        sku_vocab_size: int,
+        category_vocab_size: int,
+        event_type_vocab_size: int,
+    ):
+        super().__init__()
+        self.sku_embedding = nn.Embedding(
+            num_embeddings=sku_vocab_size + 1, 
+            embedding_dim=SKU_EMBEDDING_DIM, 
+            padding_idx=0
+        )
+        self.category_embedding = nn.Embedding(
+            num_embeddings=category_vocab_size + 1, 
+            embedding_dim=CATEGORY_EMBEDDING_DIM, 
+            padding_idx=0
+        )
+        self.event_type_embedding = nn.Embedding(
+            num_embeddings=event_type_vocab_size + 1, 
+            embedding_dim=EVENT_TYPE_EMBEDDING_DIM, 
+            padding_idx=0
+        )
+
+    def forward(self, sku: Tensor, category: Tensor, event_type: Tensor) -> Tensor:
+        """
+        Forward pass for the embedding layer.
+
+        Args:
+            sku (Tensor): Input tensor for SKU indices.
+            category (Tensor): Input tensor for category indices.
+            event_type (Tensor): Input tensor for event type indices.
+
+        Returns:
+            Tensor: Concatenated embeddings for SKU, category, and event type.
+        """
+        sku_emb = self.sku_embedding(sku)
+        category_emb = self.category_embedding(category)
+        event_type_emb = self.event_type_embedding(event_type)
+        return torch.cat([sku_emb, category_emb, event_type_emb], dim=-1)
+
+
+class SequenceModeling(nn.Module):
+    """
+    Sequence modeling using LSTM. This class defines an LSTM-based sequence model
+    that utilizes the EmbeddingLayer to process input sequences.
+    """
+
+    def __init__(
+        self, 
+        sku_vocab_size: int, 
+        category_vocab_size: int, 
+        event_type_vocab_size: int, 
+    ):
+        super().__init__()
+        self.embedding_layer = EmbeddingLayer(
+            sku_vocab_size=sku_vocab_size,
+            category_vocab_size=category_vocab_size,
+            event_type_vocab_size=event_type_vocab_size,
+        )
+        input_size = (
+            SKU_EMBEDDING_DIM 
+            + CATEGORY_EMBEDDING_DIM 
+            + EVENT_TYPE_EMBEDDING_DIM 
+            + NAME_EMBEDDING_DIM
+            + 1
+        )
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=LSTM_HIDDEN_SIZE,
+            batch_first=True,
+        )
+
+    def forward(self, x) -> Tensor:
+        """
+        Forward pass for sequence modeling.
+
+        Args:
+            x: A tuple containing:
+                - sequence_sku (Tensor): SKU indices for the sequence.
+                - sequence_category (Tensor): Category indices for the sequence.
+                - sequence_event_type (Tensor): Event type indices for the sequence.
+                - sequence_length (Tensor): Real lengths of the sequences.
+
+        Returns:
+            Tensor: Output of the LSTM after processing the input sequences.
+        """
+        (
+            client_id,
+            sequence_sku, 
+            sequence_category, 
+            sequence_price, 
+            sequence_name, 
+            sequence_event_type, 
+            sequence_length 
+        ) = x
+        # Generate embeddings for the input sequences
+        embeddings = self.embedding_layer(sequence_sku, sequence_category, sequence_event_type)
+        price_embedding = sequence_price.unsqueeze(-1)
+        name_embedding = sequence_name
+        embeddings = torch.cat([embeddings, price_embedding, name_embedding], dim=-1)
+
+        # Pass through LSTM
+        packed_input = nn.utils.rnn.pack_padded_sequence(
+            embeddings, sequence_length.cpu(), batch_first=True, enforce_sorted=False
+        )
+        packed_output, _ = self.lstm(packed_input)
+        lstm_output, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+        
+        # Average pooling hidden state
+        mask = (torch.arange(lstm_output.size(1), device=sequence_length.device)
+            < sequence_length.unsqueeze(1))
+        lstm_output = (lstm_output * mask.unsqueeze(-1)).sum(dim=1) / sequence_length.unsqueeze(-1)
+        
+        # Get the last hidden state
+        # lstm_output = lstm_output[torch.arange(lstm_output.size(0)), sequence_length - 1]
+        
+        # Record user representation
+        if not self.training:
+            client_id = client_id.cpu().numpy()
+            embedding = lstm_output.detach().cpu().numpy()
+            record_embeddings(client_id, embedding)
+        
+        return lstm_output
 
 
 class BottleneckBlock(nn.Module):
@@ -70,38 +221,58 @@ class Net(nn.Module):
 class UniversalModel(pl.LightningModule):
     def __init__(
         self,
-        embedding_dim: int,
+        sku_vocab_size: int,
+        category_vocab_size: int,
+        event_type_vocab_size: int,
+        output_dims: List[int],
         hidden_size_thin: int,
         hidden_size_wide: int,
-        output_dim: int,
         learning_rate: float,
-        metric_calculator: MetricCalculator,
-        loss_fn: Callable[[Tensor, Tensor], Tensor],
-        metrics_tracker: List[MetricContainer],
+        # metric_calculator: MetricCalculator,
+        loss_fn: List[Callable[[Tensor, Tensor], Tensor]],
+        # metrics_tracker: List[MetricContainer],
     ) -> None:
         super().__init__()
 
         torch.manual_seed(1278)
         self.learning_rate = learning_rate
-        self.net = Net(
-            embedding_dim=embedding_dim,
-            output_dim=output_dim,
-            hidden_size_thin=hidden_size_thin,
-            hidden_size_wide=hidden_size_wide,
+        self.task_nets = nn.ModuleList(
+            [
+                Net(
+                    embedding_dim=LSTM_HIDDEN_SIZE,
+                    output_dim=output_dim,
+                    hidden_size_thin=hidden_size_thin,
+                    hidden_size_wide=hidden_size_wide,
+                )
+                for output_dim in output_dims
+            ]
         )
-        self.metric_calculator = metric_calculator
-        self.loss_fn = loss_fn
-        self.metrics_tracker = metrics_tracker
+        self.sequence_modeling = SequenceModeling(
+            sku_vocab_size=sku_vocab_size,
+            category_vocab_size=category_vocab_size,
+            event_type_vocab_size=event_type_vocab_size,
+        )
+        # self.metric_calculator = metric_calculator
+        self.loss_fn = lambda preds, targets: sum(
+            loss_fn(pred, target) 
+            for pred, target, loss_fn in zip(preds, targets, loss_fn)
+        )
+        # self.metrics_tracker = metrics_tracker
 
-    def forward(self, x) -> Tensor:
-        return self.net(x)
+    def forward(self, x) -> Tuple[Tensor, Tensor, Tensor]:
+        x = self.sequence_modeling(x)
+        preds = (
+            self.task_net(x) for self.task_net in self.task_nets
+        )
+        return preds
 
     def configure_optimizers(self) -> optim.Optimizer:
         optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate)
         return optimizer
 
     def setup(self, stage):
-        self.metric_calculator.to(self.device)
+        pass
+        # self.metric_calculator.to(self.device)
 
     def training_step(self, train_batch, batch_idx) -> Tensor:
         x, y = train_batch
@@ -122,20 +293,21 @@ class UniversalModel(pl.LightningModule):
         loss = self.loss_fn(preds, y)
         self.log("val_loss", loss, prog_bar=True, logger=True)
 
-        self.metric_calculator.update(
-            predictions=preds,
-            targets=y.long(),
-        )
+        # self.metric_calculator.update(
+        #     predictions=preds,
+        #     targets=y.long(),
+        # )
 
     def on_validation_epoch_end(self) -> None:
-        metric_container = self.metric_calculator.compute()
+        pass
+        # metric_container = self.metric_calculator.compute()
 
-        for metric_name, metric_val in asdict(metric_container).items():
-            self.log(
-                metric_name,
-                metric_val,
-                prog_bar=True,
-                logger=True,
-            )
+        # for metric_name, metric_val in asdict(metric_container).items():
+        #     self.log(
+        #         metric_name,
+        #         metric_val,
+        #         prog_bar=True,
+        #         logger=True,
+        #     )
 
-        self.metrics_tracker.append(metric_container)
+        # self.metrics_tracker.append(metric_container)

@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from typing import Tuple, Dict
 from pathlib import Path
@@ -12,10 +13,18 @@ from data_utils.constants import (
 )
 from data_utils.utils import join_properties
 from data_utils.data_dir import DataDir
+from multi_task.constants import (
+    PAD_VALUE_SKU,
+    PAD_VALUE_CATEGORY,
+)
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
+
+
+def load_relevant_clients_ids(input_dir: Path) -> np.ndarray:
+    return np.load(input_dir / "relevant_clients.npy")
 
 
 class DataSplitter:
@@ -74,8 +83,8 @@ class DataSplitter:
         train_target_start: datetime,
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Returns subsequent events starting form train_target_start but before validation_target_start as train target
-        and the events after validation_target_start as validation target.
+        Returns subsequent events starting form train_target_start but before relevant_target_start as train target
+        and the events after relevant_target_start as validation target.
         Product properties are joined into target DataFrames.
         Args:
             event_df (pd.DataFrame): A DataFrame storing all events.
@@ -89,10 +98,16 @@ class DataSplitter:
             (event_df["timestamp"] >= train_target_start)
             & (event_df["timestamp"] < self.end_date)
         ]
-
         train_target = join_properties(train_target, properties_df)
-
-        return train_target
+        
+        relevant_client_ids = load_relevant_clients_ids(input_dir=self.challenge_data_dir.input_dir)
+        relevant_target = pd.DataFrame({
+            'client_id': relevant_client_ids,
+            'sku': PAD_VALUE_SKU,
+            'category': PAD_VALUE_CATEGORY
+        })
+        
+        return train_target, relevant_target
 
     def split(self) -> None:
         """
@@ -100,7 +115,7 @@ class DataSplitter:
         and sets to create training target and validation target. Data are splitted in time:
         - input data consists of events up to the training target starting point
         - train_target consists of events from the days_in_target subsequent days after the last event of input_data
-        - validation_target consists of events from the days_in_target subsequent days after train target
+        - relevant_target consists of events from the days_in_target subsequent days after train target
         """
         train_target_start = self._compute_target_start_dates()
 
@@ -117,12 +132,13 @@ class DataSplitter:
 
             if event_type == "product_buy":
                 properties = pd.read_parquet(self.challenge_data_dir.properties_file)
-                train_target = self._create_target_chunks(
+                train_target, relevant_target = self._create_target_chunks(
                     event_df=events,
                     properties_df=properties,
                     train_target_start=train_target_start,
                 )
                 self.target_events["train_target"] = train_target
+                self.target_events["relevant_target"] = relevant_target
 
     def save_splits(self) -> None:
         """

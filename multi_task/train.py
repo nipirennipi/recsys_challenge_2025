@@ -1,5 +1,6 @@
 import argparse
 import logging
+import numpy as np
 
 from itertools import chain
 
@@ -20,11 +21,18 @@ from multi_task.train_runner import (
     run_tasks,
 )
 from data_utils.data_dir import DataDir
-from typing import List
+from typing import List, Tuple, Dict
+from multi_task.utils import (
+    save_embeddings,
+)
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
+
+
+def load_relevant_clients_ids(input_dir: Path) -> np.ndarray:
+    return np.load(input_dir / "relevant_clients.npy")
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -35,12 +43,19 @@ def get_parser() -> argparse.ArgumentParser:
         required=True,
         help="Directory where target and input data are stored",
     )
-    # parser.add_argument(
-    #     "--embeddings-dir",
-    #     type=str,
-    #     required=True,
-    #     help="Directory where input embeddings are stored",
-    # )
+    parser.add_argument(
+        "--embeddings-dir",
+        type=str,
+        required=True,
+        help="Directory where input embeddings are stored",
+    )
+    parser.add_argument(
+        "--num-days",
+        nargs="*",
+        type=int,
+        default=[1, 7, 30],
+        help="Numer of days to compute features",
+    )
     valid_tasks = " ".join([task.value for task in chain(ChurnTasks, PropensityTasks)])
     parser.add_argument(
         "--tasks",
@@ -133,7 +148,6 @@ def main(params) -> None:
         tasks=tasks,
         task_constructor=task_constructor,
         data_dir=data_dir,
-        embeddings_dir=Path(params.embeddings_dir),
         num_workers=params.num_workers,
         accelerator=params.accelerator,
         devices=parse_devices(params.devices),
@@ -141,6 +155,10 @@ def main(params) -> None:
         disable_relevant_clients_check=params.disable_relevant_clients_check,
     )
 
+    save_embeddings(
+        embeddings_dir=Path(params.embeddings_dir),
+    )
+    
 
 if __name__ == "__main__":
     parse = get_parser()

@@ -35,20 +35,28 @@ from multi_task.target_data import (
 from multi_task.task_constructor import (
     TaskConstructor,
     TaskSettings,
-    transform_client_ids_and_embeddings,
+    transform_client_ids,
 )
 from multi_task.metric_aggregator import (
     MetricsAggregator,
 )
+from multi_task.preprocess_data import (
+    IdMapper,
+)
+from data_utils.constants import (
+    EventTypes,
+)
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
 
 
 def run_training(
-    task_settings: TaskSettings,
-    embeddings: np.ndarray,
-    client_ids: np.ndarray,
+    tasks: List[ValidTasks],
+    task_constructor: TaskConstructor,
+    data_dir: DataDir,
+    id_mapper: IdMapper,
     target_data: TargetData,
     num_workers: int,
     accelerator: str,
@@ -69,25 +77,53 @@ def run_training(
         devices (List[int] | str | int): id of devices used for training
         neptune_logger (NeptuneLogger): logger instance where training information is logged
     """
+    
+    # for task in tasks:
+    #     logger.info("Constructing task specific data structures")
+    #     task_settings = task_constructor.construct_task(task=task)
+
+    #     logger.info("Transforming client ids")
+    #     transformed_client_ids = transform_client_ids(
+    #         task=task, client_ids=client_ids, data_dir=data_dir
+    #     )
+
+    task_settings = [
+        task_constructor.construct_task(task=task) for task in tasks
+    ]
+    target_calculators = [
+        task_setting.target_calculator for task_setting in task_settings
+    ]
 
     data = BehavioralDataModule(
-        embeddings=embeddings,
-        client_ids=client_ids,
+        data_dir=data_dir,
+        id_mapper=id_mapper,
         target_data=target_data,
-        target_calculator=task_settings.target_calculator,
+        target_calculators=target_calculators,
         batch_size=BATCH_SIZE,
         num_workers=num_workers,
     )
 
+    sku_vocab_size = id_mapper.sku_vocab_size()
+    category_vocab_size = id_mapper.category_vocab_size()
+    event_type_vocab_size = len(EventTypes)
+    loss_fn = [
+        task_setting.loss_fn for task_setting in task_settings
+    ]
+    out_put_dims = [
+        target_calculator.target_dim for target_calculator in target_calculators
+    ]
+
     model = UniversalModel(
-        embedding_dim=embeddings.shape[1],
-        output_dim=task_settings.target_calculator.target_dim,
+        sku_vocab_size=sku_vocab_size,
+        category_vocab_size=category_vocab_size,
+        event_type_vocab_size=event_type_vocab_size,
+        output_dims=out_put_dims,
         hidden_size_thin=HIDDEN_SIZE_THIN,
         hidden_size_wide=HIDDEN_SIZE_WIDE,
         learning_rate=LEARNING_RATE,
-        metric_calculator=task_settings.metric_calculator,
-        loss_fn=task_settings.loss_fn,
-        metrics_tracker=task_settings.metrics_tracker,
+        # metric_calculator=task_settings.metric_calculator,
+        loss_fn=loss_fn,
+        # metrics_tracker=task_settings.metrics_tracker,
     )
 
     trainer = pl.Trainer(
@@ -97,6 +133,7 @@ def run_training(
         logger=neptune_logger,
         callbacks=RichProgressBar(leave=True),
         log_every_n_steps=5000,
+        check_val_every_n_epoch=MAX_EPOCH,
     )
 
     trainer.fit(model=model, datamodule=data)
@@ -107,7 +144,6 @@ def run_tasks(
     tasks: List[ValidTasks],
     task_constructor: TaskConstructor,
     data_dir: DataDir,
-    embeddings_dir: Path,
     num_workers: int,
     accelerator: str,
     devices: List[int] | str | int,
@@ -131,47 +167,34 @@ def run_tasks(
         score_dir (Path | None): Path where results are saved in an easy-to-read format, parallel to netune logging.
         disable_relevant_clients_check (bool): disables validator check for relevant clients
     """
-    client_ids, embeddings = validate_and_load_embeddings(
-        input_dir=data_dir.input_dir,
-        embeddings_dir=embeddings_dir,
-        max_embedding_dim=MAX_EMBEDDING_DIM,
-        disable_relevant_clients_check=disable_relevant_clients_check,
-    )
     target_data = TargetData.read_from_dir(target_dir=data_dir.target_dir)
     metrics_aggregator = MetricsAggregator()
-    for task in tasks:
-        logger.info("Running on %s", task.value)
-        logger.info("Constructing task specific data structures")
-        task_settings = task_constructor.construct_task(task=task)
+    logger.info("Running on multi_tasks")
 
-        logger.info("Transforming client ids")
-        (
-            transformed_client_ids,
-            transformed_embeddings,
-        ) = transform_client_ids_and_embeddings(
-            task=task, client_ids=client_ids, embeddings=embeddings, data_dir=data_dir
-        )
+    id_mapper = IdMapper(challenge_data_dir=data_dir)
+    id_mapper.load_mapping()
+    
+    logger.info("Setting up training logger")
+    neptune_logger = neptune_logger_factory.get_logger()
 
-        logger.info("Setting up training logger")
-        neptune_logger = neptune_logger_factory.get_logger(task=task)
+    logger.info("Running training")
+    run_training(
+        tasks=tasks,
+        task_constructor=task_constructor,
+        data_dir=data_dir,
+        id_mapper=id_mapper,
+        target_data=target_data,
+        num_workers=num_workers,
+        accelerator=accelerator,
+        devices=devices,
+        neptune_logger=neptune_logger,
+    )
+    neptune_logger.experiment.stop()
 
-        logger.info("Running training")
-        run_training(
-            task_settings=task_settings,
-            embeddings=transformed_embeddings,
-            client_ids=transformed_client_ids,
-            target_data=target_data,
-            num_workers=num_workers,
-            accelerator=accelerator,
-            devices=devices,
-            neptune_logger=neptune_logger,
-        )
-        neptune_logger.experiment.stop()
-
-        metrics_aggregator.update(
-            task=task, metrics_tracker=task_settings.metrics_tracker
-        )
-        logger.info("Run on %s completed", task.value)
+    # metrics_aggregator.update(
+    #     task=task, metrics_tracker=task_settings.metrics_tracker
+    # )
+    logger.info("Run on multi_tasks completed")
 
     if score_dir:
         metrics_aggregator.save(score_dir=score_dir)

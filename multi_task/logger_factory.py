@@ -42,7 +42,7 @@ class NeptuneLoggerFactory:
                 "No Neptune API key found, using offline logging. To specify Neptune api key, set --neptune-api-key command line argument."
             )
 
-    def get_logger(self, task: ValidTasks, **neptune_run_kwargs) -> NeptuneLogger:
+    def get_logger(self, **neptune_run_kwargs) -> NeptuneLogger:
         """
         Adds task specific information to logger config and returns logger.
 
@@ -51,7 +51,7 @@ class NeptuneLoggerFactory:
         Returns:
             NeptuneLogger : configured neptune logger
         """
-        logger_name = f"{self.name}:{task.value}"
+        logger_name = f"{self.name}:mutli_tasks"
         return NeptuneLogger(
             mode=self.mode,
             api_key=self.api_key,
