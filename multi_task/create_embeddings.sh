@@ -1,5 +1,5 @@
 VERSION=multi_task
-STATE=online
+STATE=offline
 EMBEDDINGS_DIR="/data/lyjiang/RecSys_Challenge_2025/submit/${VERSION}/${STATE}"
 
 mkdir -p "${EMBEDDINGS_DIR}"

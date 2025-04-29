@@ -16,6 +16,9 @@ from multi_task.constants import (
     EVENT_TYPE_EMBEDDING_DIM,
     NAME_EMBEDDING_DIM,
     LSTM_HIDDEN_SIZE,
+    LSTM_NUM_LAYERS,
+    LSTM_DROPOUT,
+    LSTM_BIDIRECTIONAL,
 )
 from multi_task.utils import (
     record_embeddings,
@@ -107,6 +110,9 @@ class SequenceModeling(nn.Module):
             input_size=input_size,
             hidden_size=LSTM_HIDDEN_SIZE,
             batch_first=True,
+            num_layers=LSTM_NUM_LAYERS,
+            dropout=LSTM_DROPOUT,
+            bidirectional=LSTM_BIDIRECTIONAL,
         )
 
     def forward(self, x) -> Tensor:

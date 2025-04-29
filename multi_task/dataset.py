@@ -117,12 +117,14 @@ class BehavioralDataset(Dataset):
         of events: ADD_TO_CART and PRODUCT_BUY.
         """
         logger.info(f"Constructing {self.mode} user behavior sequence")
-        self.client_ids = set(self.target_df["client_id"])
+        if self.mode != "train":
+            self.client_ids = set(self.target_df["client_id"])
         all_events = []
 
         for event_type in [EventTypes.ADD_TO_CART, EventTypes.PRODUCT_BUY]:
             events = self._load_events(event_type=event_type)
-            events = events[events["client_id"].isin(self.client_ids)]
+            if self.mode != "train":
+                events = events[events["client_id"].isin(self.client_ids)]
             events = events[["client_id", "timestamp", "sku"]]
             events["event_type"] = event_type.get_index()
             all_events.append(events)
@@ -139,9 +141,9 @@ class BehavioralDataset(Dataset):
             }
             for client_id, group in all_events_df.groupby("client_id")
         ]
-        # Filter out clients that do not have any behavior_sequence
+        
         self.client_ids = {entry["client_id"] for entry in self.behavior_sequence}
-        self.target_df = self.target_df[self.target_df["client_id"].isin(self.client_ids)]
+        # self.target_df = self.target_df[self.target_df["client_id"].isin(self.client_ids)]
         
         logger.info(f"Behavior sequence constructed for {len(self.client_ids)} clients")
         # [
