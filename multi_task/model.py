@@ -11,14 +11,19 @@ from multi_task.metrics_containers import (
     MetricContainer,
 )
 from multi_task.constants import (
+    QUERY_EMBEDDING_DIM,
     SKU_EMBEDDING_DIM,
     CATEGORY_EMBEDDING_DIM,
     EVENT_TYPE_EMBEDDING_DIM,
+    URL_EMBEDDING_DIM,
     NAME_EMBEDDING_DIM,
     LSTM_HIDDEN_SIZE,
     LSTM_NUM_LAYERS,
     LSTM_DROPOUT,
     LSTM_BIDIRECTIONAL,
+    NUM_CROSS_LAYERS,
+    DEEP_HIDDEN_DIMS,
+    EMBEDDING_DIM,
 )
 from multi_task.utils import (
     record_embeddings,
@@ -28,7 +33,44 @@ logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
 
 
-class EmbeddingLayer(nn.Module):
+class URLEmbeddingLayer(nn.Module):
+    """
+    Embedding layer for URL IDs.
+    This layer creates embeddings for URL IDs.
+
+    Args:
+        url_vocab_size (int): Vocabulary size for URL embeddings.
+        embedding_dim (int): Dimensionality of the embeddings.
+    """
+
+    def __init__(
+        self, 
+        url_vocab_size: int
+    ):
+        super().__init__()
+        self.url_embedding = nn.Embedding(
+            num_embeddings=url_vocab_size + 1,
+            embedding_dim=URL_EMBEDDING_DIM,
+            padding_idx=0
+        )
+
+    def forward(self, url_ids: Tensor) -> Tensor:
+        """
+        Forward pass for the URL embedding layer.
+
+        Args:
+            url_ids (Tensor): Input tensor for URL ID indices.
+
+        Returns:
+            Tensor: Embeddings for URL IDs.
+        """
+        return self.url_embedding(url_ids)
+
+
+
+
+
+class SKUEmbeddingLayer(nn.Module):
     """
     Embedding layer for sku, category, and event type.
     This layer creates separate embeddings for each input feature and concatenates them.
@@ -81,6 +123,92 @@ class EmbeddingLayer(nn.Module):
         return torch.cat([sku_emb, category_emb, event_type_emb], dim=-1)
 
 
+class DCNV2(nn.Module):
+    """
+    Deep & Cross Network V2 (DCN-V2).
+    This block performs explicit feature crossing with improved parameterization
+    and combines it with deep layers.
+
+    Args:
+        input_dim (int): Dimensionality of the input features.
+        num_cross_layers (int): Number of cross layers to apply.
+        deep_hidden_dims (List[int]): List of hidden layer dimensions for the deep network.
+    """
+
+    def __init__(
+        self, 
+        input_dim: int,
+    ):
+        super().__init__()
+        self.num_cross_layers = NUM_CROSS_LAYERS
+        self.cross_layers = nn.ModuleList(
+            [nn.Linear(input_dim, input_dim, bias=True) for _ in range(NUM_CROSS_LAYERS)]
+        )
+        
+        deep_layers = []
+        for in_dim, out_dim in zip([input_dim] + DEEP_HIDDEN_DIMS[:-1], DEEP_HIDDEN_DIMS):
+            deep_layers.append(nn.Linear(in_dim, out_dim))
+            deep_layers.append(nn.ReLU())
+        self.deep_layers = nn.Sequential(*deep_layers)
+
+        self.cross_norm = nn.LayerNorm(input_dim)
+        self.deep_norm = nn.LayerNorm(DEEP_HIDDEN_DIMS[-1])
+
+        self.output_layers = nn.Sequential(
+            nn.Linear(input_dim + DEEP_HIDDEN_DIMS[-1], input_dim * 4),
+            nn.LayerNorm(input_dim * 4),
+            nn.ReLU(),
+            nn.Linear(input_dim * 4, input_dim * 2),
+            nn.LayerNorm(input_dim * 2),
+            nn.ReLU(),
+            nn.Linear(input_dim * 2, input_dim)
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass for the DCN-V2 block.
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, input_dim).
+
+        Returns:
+            Tensor: Output tensor after applying cross layers and deep layers.
+        """
+        x0 = x
+        # Cross layers
+        for i in range(self.num_cross_layers):
+            x = x0 * self.cross_layers[i](x) + x
+        cross_output = x
+        cross_output = self.cross_norm(cross_output)
+
+        # Log if cross_output contains values greater than 10000 or less than -10000
+        if torch.any(cross_output > 1000) or torch.any(cross_output < -1000):
+            logger.info(
+                "cross_output out of range: max=%s, min=%s", 
+                torch.max(cross_output).item(), 
+                torch.min(cross_output).item()
+            )
+
+        # Deep layers
+        deep_output = self.deep_layers(x0)
+        deep_output = self.deep_norm(deep_output)
+
+        # Log if deep_output contains values greater than 10000 or less than -10000
+        if torch.any(deep_output > 1000) or torch.any(deep_output < -1000):
+            logger.info(
+                "deep_output out of range: max=%s, min=%s", 
+                torch.max(deep_output).item(), 
+                torch.min(deep_output).item()
+            )
+
+        # Concatenate cross and deep outputs
+        combined_output = torch.cat([cross_output, deep_output], dim=-1)
+        output = self.output_layers(combined_output)
+
+        # Final output
+        return output
+
+
 class SequenceModeling(nn.Module):
     """
     Sequence modeling using LSTM. This class defines an LSTM-based sequence model
@@ -92,12 +220,16 @@ class SequenceModeling(nn.Module):
         sku_vocab_size: int, 
         category_vocab_size: int, 
         event_type_vocab_size: int, 
+        url_vocab_size: int
     ):
         super().__init__()
-        self.embedding_layer = EmbeddingLayer(
+        self.sku_embedding_layer = SKUEmbeddingLayer(
             sku_vocab_size=sku_vocab_size,
             category_vocab_size=category_vocab_size,
             event_type_vocab_size=event_type_vocab_size,
+        )
+        self.url_embedding_layer = URLEmbeddingLayer(
+            url_vocab_size=url_vocab_size,
         )
         input_size = (
             SKU_EMBEDDING_DIM 
@@ -113,6 +245,10 @@ class SequenceModeling(nn.Module):
             num_layers=LSTM_NUM_LAYERS,
             dropout=LSTM_DROPOUT,
             bidirectional=LSTM_BIDIRECTIONAL,
+        )
+        self.lstm_norm = nn.LayerNorm(LSTM_HIDDEN_SIZE)
+        self.dcnv2 = DCNV2(
+            input_dim=EMBEDDING_DIM,
         )
 
     def forward(self, x) -> Tensor:
@@ -136,36 +272,96 @@ class SequenceModeling(nn.Module):
             sequence_price, 
             sequence_name, 
             sequence_event_type, 
-            sequence_length 
+            sequence_url,
+            sequence_query,
+            sequence_sku_length,
+            sequence_url_length,
+            sequence_query_length,
         ) = x
         # Generate embeddings for the input sequences
-        embeddings = self.embedding_layer(sequence_sku, sequence_category, sequence_event_type)
+        embeddings = self.sku_embedding_layer(sequence_sku, sequence_category, sequence_event_type)
         price_embedding = sequence_price.unsqueeze(-1)
         name_embedding = sequence_name
         embeddings = torch.cat([embeddings, price_embedding, name_embedding], dim=-1)
 
         # Pass through LSTM
         packed_input = nn.utils.rnn.pack_padded_sequence(
-            embeddings, sequence_length.cpu(), batch_first=True, enforce_sorted=False
+            embeddings, sequence_sku_length.cpu(), batch_first=True, enforce_sorted=False
         )
         packed_output, _ = self.lstm(packed_input)
         lstm_output, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
         
         # Average pooling hidden state
-        mask = (torch.arange(lstm_output.size(1), device=sequence_length.device)
-            < sequence_length.unsqueeze(1))
-        lstm_output = (lstm_output * mask.unsqueeze(-1)).sum(dim=1) / sequence_length.unsqueeze(-1)
+        mask = (torch.arange(lstm_output.size(1), device=sequence_sku_length.device)
+            < sequence_sku_length.unsqueeze(1))
+        lstm_output = (lstm_output * mask.unsqueeze(-1)).sum(dim=1) / sequence_sku_length.unsqueeze(-1)
+        lstm_output = self.lstm_norm(lstm_output)
+        
+        # Log if lstm_output contains values greater than 10000 or less than -10000
+        if torch.any(lstm_output > 10) or torch.any(lstm_output < -10):
+            logger.info(
+                "lstm_output out of range: max=%s, min=%s", 
+                torch.max(lstm_output).item(), 
+                torch.min(lstm_output).item()
+            )
+        
         
         # Get the last hidden state
         # lstm_output = lstm_output[torch.arange(lstm_output.size(0)), sequence_length - 1]
         
+        # Average pooling for url_embedding (query_embedding) based on sequence_url_length (sequence_query_length)
+        url_embedding = self.url_embedding_layer(sequence_url)
+        query_embedding = sequence_query
+        url_mask = (torch.arange(url_embedding.size(1), device=sequence_url_length.device)
+                < sequence_url_length.unsqueeze(1))
+        url_embedding = (url_embedding * url_mask.unsqueeze(-1)).sum(dim=1) / sequence_url_length.unsqueeze(-1)
+        query_mask = (torch.arange(query_embedding.size(1), device=sequence_query_length.device)
+                  < sequence_query_length.unsqueeze(1))
+        query_embedding = (query_embedding * query_mask.unsqueeze(-1)).sum(dim=1) / sequence_query_length.unsqueeze(-1)
+
+
+        # Log if url_embedding contains values greater than 10000 or less than -10000
+        if torch.any(url_embedding > 10) or torch.any(url_embedding < -10):
+            logger.info(
+                "url_embedding out of range: max=%s, min=%s", 
+                torch.max(url_embedding).item(), 
+                torch.min(url_embedding).item()
+            )
+
+        # Log if query_embedding contains values greater than 10000 or less than -10000
+        if torch.any(query_embedding > 10) or torch.any(query_embedding < -10):
+            logger.info(
+                "query_embedding out of range: max=%s, min=%s", 
+                torch.max(query_embedding).item(), 
+                torch.min(query_embedding).item()
+            )
+
+        # Concatenate lstm_output, url_embedding, and query_embedding
+        combined_feat = torch.cat([lstm_output, url_embedding, query_embedding], dim=-1)
+        # Log if combined_feat contains values greater than 10000 or less than -10000
+        # if torch.any(combined_feat > 100) or torch.any(combined_feat < -100):
+        #     logger.info(
+        #         "combined_feat out of range: max=%s, min=%s", 
+        #         torch.max(combined_feat).item(), 
+        #         torch.min(combined_feat).item()
+        #     )
+        user_representation = self.dcnv2(combined_feat)
+        
+        # Log if user_representation contains values greater than 10000 or less than -10000
+        if torch.any(user_representation > 10000) or torch.any(user_representation < -10000):
+            logger.info(
+                "user_representation out of range: max=%s, min=%s", 
+                torch.max(user_representation).item(), 
+                torch.min(user_representation).item()
+            )
+        
         # Record user representation
         if not self.training:
             client_id = client_id.cpu().numpy()
-            embedding = lstm_output.detach().cpu().numpy()
+            embedding = user_representation.detach().cpu().numpy()
             record_embeddings(client_id, embedding)
         
-        return lstm_output
+        return user_representation
 
 
 class BottleneckBlock(nn.Module):
@@ -230,6 +426,7 @@ class UniversalModel(pl.LightningModule):
         sku_vocab_size: int,
         category_vocab_size: int,
         event_type_vocab_size: int,
+        url_vocab_size: int,
         output_dims: List[int],
         hidden_size_thin: int,
         hidden_size_wide: int,
@@ -245,7 +442,7 @@ class UniversalModel(pl.LightningModule):
         self.task_nets = nn.ModuleList(
             [
                 Net(
-                    embedding_dim=LSTM_HIDDEN_SIZE,
+                    embedding_dim=EMBEDDING_DIM,
                     output_dim=output_dim,
                     hidden_size_thin=hidden_size_thin,
                     hidden_size_wide=hidden_size_wide,
@@ -257,6 +454,7 @@ class UniversalModel(pl.LightningModule):
             sku_vocab_size=sku_vocab_size,
             category_vocab_size=category_vocab_size,
             event_type_vocab_size=event_type_vocab_size,
+            url_vocab_size=url_vocab_size,
         )
         # self.metric_calculator = metric_calculator
         self.loss_fn = lambda preds, targets: sum(

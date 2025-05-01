@@ -106,6 +106,7 @@ def run_training(
     sku_vocab_size = id_mapper.sku_vocab_size()
     category_vocab_size = id_mapper.category_vocab_size()
     event_type_vocab_size = len(EventTypes)
+    url_vocab_size = id_mapper.url_vocab_size()
     loss_fn = [
         task_setting.loss_fn for task_setting in task_settings
     ]
@@ -117,6 +118,7 @@ def run_training(
         sku_vocab_size=sku_vocab_size,
         category_vocab_size=category_vocab_size,
         event_type_vocab_size=event_type_vocab_size,
+        url_vocab_size=url_vocab_size,
         output_dims=out_put_dims,
         hidden_size_thin=HIDDEN_SIZE_THIN,
         hidden_size_wide=HIDDEN_SIZE_WIDE,
