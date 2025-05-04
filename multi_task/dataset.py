@@ -148,7 +148,7 @@ class BehavioralDataset(Dataset):
             with open(sequence_file, "rb") as f:
                 self.behavior_sequence = pickle.load(f)
             return True
-        
+        logger.info(f"Behavior sequence not found in {save_dir}")
         return False
         
     def _save_behavior_sequence(self) -> None:

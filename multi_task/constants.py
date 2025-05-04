@@ -76,4 +76,4 @@ DEEP_HIDDEN_DIMS = [EMBEDDING_DIM * 2, EMBEDDING_DIM * 2, EMBEDDING_DIM]
 # Contrastive Learning Hyperparameters
 CONTRASTIVE_TEMP = 0.1  # Temperature for contrastive loss
 CONTRASTIVE_LAMBDA = 0.5  # Weight for contrastive loss
-
+MLP_PROJECTION_DIM = 128  # Dimension of the MLP projection head

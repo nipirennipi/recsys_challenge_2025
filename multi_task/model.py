@@ -26,6 +26,7 @@ from multi_task.constants import (
     EMBEDDING_DIM,
     CONTRASTIVE_TEMP,
     CONTRASTIVE_LAMBDA,
+    MLP_PROJECTION_DIM,
 )
 from multi_task.utils import (
     record_embeddings,
@@ -67,9 +68,6 @@ class URLEmbeddingLayer(nn.Module):
             Tensor: Embeddings for URL IDs.
         """
         return self.url_embedding(url_ids)
-
-
-
 
 
 class SKUEmbeddingLayer(nn.Module):
@@ -366,6 +364,25 @@ class SequenceModeling(nn.Module):
         return user_representation
 
 
+class MLPProjector(nn.Module):
+    """
+    A small neural network projection head that maps representations
+    to the space where contrastive loss is applied.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(EMBEDDING_DIM, EMBEDDING_DIM)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(EMBEDDING_DIM, MLP_PROJECTION_DIM)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        return x
+
+
 class BottleneckBlock(nn.Module):
     """
     Inverted Bottleneck.
@@ -458,6 +475,7 @@ class UniversalModel(pl.LightningModule):
             event_type_vocab_size=event_type_vocab_size,
             url_vocab_size=url_vocab_size,
         )
+        self.mlp_projector = MLPProjector()
         # self.metric_calculator = metric_calculator
         self.loss_fn = lambda preds, targets: sum(
             loss_fn(pred, target) 
@@ -514,6 +532,8 @@ class UniversalModel(pl.LightningModule):
         user_rep, user_rep_aug1, user_rep_aug2 = torch.chunk(stacked_user_rep, chunks=3, dim=0)
 
         # Compute contrastive loss
+        user_rep_aug1 = self.mlp_projector(user_rep_aug1)
+        user_rep_aug2 = self.mlp_projector(user_rep_aug2)
         contrastive_loss = self.compute_contrastive_loss(
             user_rep_aug1, 
             user_rep_aug2,
