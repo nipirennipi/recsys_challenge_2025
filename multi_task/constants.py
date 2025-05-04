@@ -26,7 +26,7 @@ EVENT_TYPE_TO_COLUMNS: Dict[EventTypes, List[str]] = {
 ENTITY_COLUMN_NAME = "entity"
 
 # In competition settings these hyperparameters are fixed
-BATCH_SIZE = 128
+BATCH_SIZE = 128 * 48
 HIDDEN_SIZE_THIN = 2048
 HIDDEN_SIZE_WIDE = 4096
 LEARNING_RATE = 0.001
@@ -72,3 +72,8 @@ EMBEDDING_DIM = (
 
 NUM_CROSS_LAYERS = 2
 DEEP_HIDDEN_DIMS = [EMBEDDING_DIM * 2, EMBEDDING_DIM * 2, EMBEDDING_DIM]
+
+# Contrastive Learning Hyperparameters
+CONTRASTIVE_TEMP = 0.1  # Temperature for contrastive loss
+CONTRASTIVE_LAMBDA = 0.5  # Weight for contrastive loss
+

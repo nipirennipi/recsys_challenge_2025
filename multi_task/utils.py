@@ -34,8 +34,11 @@ def save_embeddings(
     Args:
     embeddings_dir (Path): The directory where to save embeddings and client_ids.
     """
-    logger.info("Saving embeddings")
     global EMBEDDINGS_DICT
+    if len(EMBEDDINGS_DICT) == 0:
+        logger.warning("No embeddings to save.")
+        return
+    logger.info("Saving embeddings")
     embeddings_dir.mkdir(parents=True, exist_ok=True)
     client_ids = np.array(list(EMBEDDINGS_DICT.keys()), dtype=CLIENT_IDS_DTYPE)
     embeddings = np.array(list(EMBEDDINGS_DICT.values()), dtype=EMBEDDINGS_DTYPE)

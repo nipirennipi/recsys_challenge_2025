@@ -4,11 +4,14 @@ from pathlib import Path
 import argparse
 import logging
 
-from data_utils.constants import (
-    EventTypes,
-)
 from data_utils.utils import join_properties
 from data_utils.data_dir import DataDir
+from multi_task.constants import (
+    EventTypes,
+    PAD_VALUE_SKU,
+    PAD_VALUE_CATEGORY,
+    PAD_VALUE_URL,
+)
 import json
 
 logging.basicConfig()
@@ -97,18 +100,24 @@ class IdMapper:
         """
         Returns the mapped sku id.
         """
+        if sku == PAD_VALUE_SKU:
+            return PAD_VALUE_SKU
         return self.sku_id_map[sku]
     
     def get_category_id(self, category: int) -> int:
         """
         Returns the mapped category id.
         """
+        if category == PAD_VALUE_CATEGORY:
+            return PAD_VALUE_CATEGORY
         return self.category_id_map[category]
     
     def get_url_id(self, url: int) -> int:
         """
         Returns the mapped url id.
         """
+        if url == PAD_VALUE_URL:
+            return PAD_VALUE_URL
         return self.url_id_map[url]
     
     def client_vocab_size(self) -> int:

@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import logging
 import re
-import pickle
 from typing import Dict, Tuple, List, Set
 from torch.utils.data import Dataset
 
@@ -130,54 +129,11 @@ class BehavioralDataset(Dataset):
             for _, row in properties.iterrows()
         }
 
-    def _load_behavior_sequence(self) -> bool:
-        save_dir = self.data_dir._target_dir
-        
-        if self.mode == "train":
-            logger.info(f"Attempting to load {self.mode} user behavior sequence")
-            ids_file = save_dir / "train_ids.pkl"
-            sequence_file = save_dir / "train_sequence.pkl"
-        else:
-            ids_file = save_dir / "relevant_ids.pkl"
-            sequence_file = save_dir / "relevant_sequence.pkl"
-
-        if ids_file.exists() and sequence_file.exists():
-            with open(ids_file, "rb") as f:
-                self.client_ids = pickle.load(f)
-
-            with open(sequence_file, "rb") as f:
-                self.behavior_sequence = pickle.load(f)
-            return True
-        
-        return False
-        
-    def _save_behavior_sequence(self) -> None:
-        save_dir = self.data_dir._target_dir
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        if self.mode == "train":
-            ids_file = save_dir / "train_ids.pkl"
-            sequence_file = save_dir / "train_sequence.pkl"
-        else:
-            ids_file = save_dir / "relevant_ids.pkl"
-            sequence_file = save_dir / "relevant_sequence.pkl"
-
-        with open(ids_file, "wb") as f:
-            pickle.dump(self.client_ids, f)
-
-        with open(sequence_file, "wb") as f:
-            pickle.dump(self.behavior_sequence, f)
-    
     def _behavior_sequence(self) -> None:
         """
         Construct the user's historical behavior sequence, including two types 
         of events: ADD_TO_CART and PRODUCT_BUY.
         """
-        if self._load_behavior_sequence():
-            logger.info("Behavior sequence already loaded, skipping construction.")
-            logger.info(f"Loaded behavior sequence for {len(self.client_ids)} clients")
-            return
-        
         logger.info(f"Constructing {self.mode} user behavior sequence")
         if self.mode != "train":
             self.client_ids = set(self.target_df["client_id"])
@@ -263,9 +219,6 @@ class BehavioralDataset(Dataset):
                 "sequence_url": sequence_url_info,
                 "sequence_query": sequence_query_info,
             })
-        
-        self._save_behavior_sequence()
-        logger.info(f"Behavior sequence saved to {self.data_dir._target_dir}")
     
     def _pad_sequence(self, sequence: np.ndarray, pad_value: object) -> np.ndarray:
         """

@@ -24,6 +24,8 @@ from multi_task.constants import (
     NUM_CROSS_LAYERS,
     DEEP_HIDDEN_DIMS,
     EMBEDDING_DIM,
+    CONTRASTIVE_TEMP,
+    CONTRASTIVE_LAMBDA,
 )
 from multi_task.utils import (
     record_embeddings,
@@ -462,13 +464,91 @@ class UniversalModel(pl.LightningModule):
             for pred, target, loss_fn in zip(preds, targets, loss_fn)
         )
         # self.metrics_tracker = metrics_tracker
+        self.contrastive_temp = CONTRASTIVE_TEMP
+        self.contrastive_lambda = CONTRASTIVE_LAMBDA
+        self.nce_fct = nn.CrossEntropyLoss()
 
-    def forward(self, x) -> Tuple[Tensor, Tensor, Tensor]:
-        x = self.sequence_modeling(x)
-        preds = (
-            self.task_net(x) for self.task_net in self.task_nets
+    def compute_contrastive_loss(
+        self, 
+        query: Tensor, 
+        key: Tensor,
+        normalize: bool = True
+    ) -> Tensor:
+        """
+        Compute the contrastive loss using the InfoNCE loss function.
+        Args:
+            query (Tensor): The query tensor.
+            key (Tensor): The key tensor.
+            normalize (bool): Whether to normalize the query and key tensors.
+        Returns:
+            Tensor: The contrastive loss.
+        """
+        # Normalize the query and key tensors with L2 normalization
+        if normalize:
+            query = nn.functional.normalize(query, p=2, dim=1)
+            key = nn.functional.normalize(key, p=2, dim=1)
+        # Compute the cosine similarity and divede by the temperature
+        z = torch.cat((query, key), dim=0)
+        sim = torch.mm(z, z.T) / self.contrastive_temp
+        # Construct the labels for the NCE loss
+        N = query.size(0)
+        labels = torch.arange(2 * N, device=z.device)
+        labels = (labels + N) % (2 * N)
+        # Mask the diagonal elements to avoid self-similarity
+        mask = torch.eye(2 * N, device=z.device).bool()
+        sim = sim.masked_fill(mask, float('-inf'))
+        # Compute the InfoNCE loss
+        loss = self.nce_fct(sim, labels)
+        return loss
+
+    def forward(self, x) -> Tensor:
+        return self.sequence_modeling(x)
+
+    def training_step(self, train_batch, batch_idx) -> Tensor:
+        x, x_aug1, x_aug2, y = train_batch
+        stacked_x = tuple(
+            torch.cat([x_elem, x_aug1_elem, x_aug2_elem], dim=0)
+            for x_elem, x_aug1_elem, x_aug2_elem in zip(x, x_aug1, x_aug2)
         )
-        return preds
+        stacked_user_rep = self.forward(stacked_x)
+        user_rep, user_rep_aug1, user_rep_aug2 = torch.chunk(stacked_user_rep, chunks=3, dim=0)
+
+        # Compute contrastive loss
+        contrastive_loss = self.compute_contrastive_loss(
+            user_rep_aug1, 
+            user_rep_aug2,
+            normalize=True,
+        )
+        self.log(
+            "contrastive_loss", 
+            contrastive_loss, 
+            on_step=True, 
+            prog_bar=True, 
+            logger=True
+        )
+        
+        # Compute task-specific loss
+        preds = (
+            self.task_net(user_rep) for self.task_net in self.task_nets
+        )
+        task_loss = self.loss_fn(preds, y)
+        self.log(
+            "task_loss", 
+            task_loss, 
+            on_step=True, 
+            prog_bar=True, 
+            logger=True
+        )
+        total_loss = task_loss + self.contrastive_lambda * contrastive_loss
+        self.log(
+            "train_loss", 
+            total_loss, 
+            on_step=True, 
+            prog_bar=True, 
+            logger=True
+        )
+
+        return total_loss
 
     def configure_optimizers(self) -> optim.Optimizer:
         optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate)
@@ -478,22 +558,12 @@ class UniversalModel(pl.LightningModule):
         pass
         # self.metric_calculator.to(self.device)
 
-    def training_step(self, train_batch, batch_idx) -> Tensor:
-        x, y = train_batch
-        preds = self.forward(x)
-        loss = self.loss_fn(preds, y)
-        self.log(
-            "train_loss",
-            loss,
-            on_step=True,
-            prog_bar=True,
-            logger=True,
-        )
-        return loss
-
     def validation_step(self, val_batch, batch_idx) -> None:
         x, y = val_batch
-        preds = self.forward(x)
+        user_rep = self.forward(x)
+        preds = (
+            self.task_net(user_rep) for self.task_net in self.task_nets
+        )
         loss = self.loss_fn(preds, y)
         self.log("val_loss", loss, prog_bar=True, logger=True)
 
