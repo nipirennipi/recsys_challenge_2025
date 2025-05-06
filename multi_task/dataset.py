@@ -104,7 +104,6 @@ class BehavioralDataset(Dataset):
         self._load_properties_dict()
         self._behavior_sequence()
         
-
     def _load_properties_dict(self) -> None:
         """
         Load properties from the properties file and construct a dictionary
@@ -230,7 +229,8 @@ class BehavioralDataset(Dataset):
             for timestamp, entity, event_type in sequence:
                 if event_type in [
                     EventTypes.ADD_TO_CART.get_index(), 
-                    EventTypes.PRODUCT_BUY.get_index()
+                    EventTypes.PRODUCT_BUY.get_index(),
+                    EventTypes.REMOVE_FROM_CART.get_index(),
                 ]:
                     sku = int(entity)
                     properties = self.properties_dict[sku]
