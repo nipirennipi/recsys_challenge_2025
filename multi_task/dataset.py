@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import logging
-import re
 import pickle
 from typing import Dict, Tuple, List, Set
 from torch.utils.data import Dataset
@@ -26,53 +25,16 @@ from multi_task.constants import (
     PAD_VALUE_URL,
     PAD_VALUE_QUERY,
     MAX_SEQUENCE_LENGTH,
-    NAME_MIN_VALUE,
-    NAME_MAX_VALUE,
     QUERY_MIN_VALUE,
     QUERY_MAX_VALUE,
-    PRICE_MIN_VALUE,
-    PRICE_MAX_VALUE,
+)
+from multi_task.utils import (
+    parse_to_array,
 )
 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
-
-
-def raise_err_if_incorrect_form(string_representation_of_vector: str):
-    """
-    Checks if string_representation_of_vector has the correct form.
-
-    Correct form is a string representing list of ints with arbitrary number of spaces in between.
-
-    Args:
-        string_representation_of_vector (str): potential string representation of vector
-    """
-    m = re.fullmatch(r"\[( *\d* *)*\]", string=string_representation_of_vector)
-    if m is None:
-        raise ValueError(
-            f"{string_representation_of_vector} is incorrect form of string representation of vector – correct form is: '[( *\d* *)*]'"
-        )
-
-
-def parse_to_array(string_representation_of_vector: str) -> np.ndarray:
-    """
-    Parses string representing vector of integers into array of integers.
-
-    Args:
-        string_representation_of_vector (str): string representing vector of ints e.g. '[11 2 3]'
-    Returns:
-        np.ndarray: array of integers obtained from string representation
-    """
-    raise_err_if_incorrect_form(
-        string_representation_of_vector=string_representation_of_vector
-    )
-    string_representation_of_vector = string_representation_of_vector.replace(
-        "[", ""
-    ).replace("]", "")
-    return np.array(
-        [int(s) for s in string_representation_of_vector.split(" ") if s != ""]
-    ).astype(dtype=np.float32)
 
 
 class BehavioralDataset(Dataset):
@@ -87,6 +49,7 @@ class BehavioralDataset(Dataset):
         id_mapper: IdMapper,
         target_df: pd.DataFrame,
         target_calculators: List[TargetCalculator],
+        properties_dict: Dict[int, Dict[str, object]],
         mode: str = "train",
     ) -> None:
         super().__init__()
@@ -95,39 +58,12 @@ class BehavioralDataset(Dataset):
         self.id_mapper = id_mapper
         self.target_df = target_df
         self.target_calculators = target_calculators
+        self.properties_dict = properties_dict
         self.mode = mode
         
         self.client_ids: Set[int] = set()
         self.behavior_sequence = []
-        self.properties_dict: Dict[int, Dict[str, object]] = {}
-        
-        self._load_properties_dict()
         self._behavior_sequence()
-        
-    def _load_properties_dict(self) -> None:
-        """
-        Load properties from the properties file and construct a dictionary
-        with sku as the key and its attributes as the value.
-        """
-        logger.info("Loading properties")
-        properties = pd.read_parquet(self.data_dir.properties_file)
-        
-        # Normalize price, name
-        properties["name"] = properties["name"].apply(parse_to_array)
-        properties["name"] = (properties["name"] - NAME_MIN_VALUE) / (NAME_MAX_VALUE - NAME_MIN_VALUE)
-        properties["name"] = properties["name"].apply(lambda x: np.clip(x, 0, 1).astype(np.float32))
-        
-        properties["price"] = (properties["price"] - PRICE_MIN_VALUE) / (PRICE_MAX_VALUE - PRICE_MIN_VALUE)
-        properties["price"] = properties["price"].apply(lambda x: np.clip(x, 0, 1).astype(np.float32))
-
-        self.properties_dict = {
-            row["sku"]: {
-                "category": row["category"],
-                "price": row["price"],
-                "name": row["name"],
-            }
-            for _, row in properties.iterrows()
-        }
 
     def _load_behavior_sequence(self) -> bool:
         save_dir = self.data_dir._target_dir
@@ -317,16 +253,19 @@ class BehavioralDataset(Dataset):
         return len(self.client_ids)
 
     def __getitem__(self, idx) -> tuple[np.ndarray, np.ndarray]:
-        behavior_data, target = self._getitem(idx, is_augmentation=False)
+        behavior_data = self._getitem(idx, is_augmentation=False)
         if self.mode == "train":
-            behavior_data_aug1 = self._getitem(idx, is_augmentation=True)
-            behavior_data_aug2 = self._getitem(idx, is_augmentation=True)
-            return (behavior_data, behavior_data_aug1, behavior_data_aug2, target)
-        return behavior_data, target
+            return (
+                behavior_data[0],
+                self._getitem(idx, is_augmentation=True),
+                self._getitem(idx, is_augmentation=True),
+                behavior_data[1],  # target
+            )
+        return behavior_data
 
     def _getitem(self, idx, is_augmentation=False) -> tuple[np.ndarray, np.ndarray]:
         client_id = self.behavior_sequence[idx]["client_id"]
-        if not is_augmentation:
+        if not is_augmentation and self.mode == "train":
             target = [
                 target_calculator.compute_target(
                     client_id=client_id, target_df=self.target_df
@@ -448,5 +387,5 @@ class BehavioralDataset(Dataset):
         # if np.any(sequence_query > 1) or np.any(sequence_query < -1):
         #     logger.info(f"Out of range values found in sequence_query, max: {np.max(sequence_query)}, min: {np.min(sequence_query)}")
 
-        return (behavior_data, target) if not is_augmentation else behavior_data
+        return (behavior_data, target) if not is_augmentation and self.mode == "train" else behavior_data
     

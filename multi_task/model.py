@@ -579,13 +579,13 @@ class UniversalModel(pl.LightningModule):
         # self.metric_calculator.to(self.device)
 
     def validation_step(self, val_batch, batch_idx) -> None:
-        x, y = val_batch
-        user_rep = self.forward(x)
-        preds = (
-            self.task_net(user_rep) for self.task_net in self.task_nets
-        )
-        loss = self.loss_fn(preds, y)
-        self.log("val_loss", loss, prog_bar=True, logger=True)
+        x = val_batch
+        self.forward(x)
+        # preds = (
+        #     self.task_net(user_rep) for self.task_net in self.task_nets
+        # )
+        # loss = self.loss_fn(preds, y)
+        # self.log("val_loss", loss, prog_bar=True, logger=True)
 
         # self.metric_calculator.update(
         #     predictions=preds,

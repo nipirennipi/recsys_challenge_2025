@@ -16,6 +16,7 @@ class ChurnTasks(ValidTasks):
 class PropensityTasks(ValidTasks):
     PROPENSITY_CATEGORY = "propensity_category"
     PROPENSITY_SKU = "propensity_sku"
+    PROPENSITY_PRICE = "propensity_price"
 
 
 def parse_task(task_name: str) -> ValidTasks:
