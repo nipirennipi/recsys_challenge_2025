@@ -1,8 +1,5 @@
-VERSION=multi_task
+VERSION=user_feat
 STATE=online
-EMBEDDINGS_DIR="/data/lyjiang/RecSys_Challenge_2025/submit/${VERSION}/${STATE}"
-
-mkdir -p "${EMBEDDINGS_DIR}"
 
 if [ "${STATE}" = "offline" ]; then
     DATA_DIR="/data/lyjiang/RecSys_Challenge_2025/input"
@@ -13,11 +10,9 @@ else
     exit 1
 fi
 
-python -m multi_task.train \
+EMBEDDINGS_DIR="${DATA_DIR}/target"
+
+python -m user_feat.aggregated_features_baseline.create_embeddings \
     --data-dir "${DATA_DIR}" \
     --embeddings-dir "${EMBEDDINGS_DIR}" \
-    --tasks churn propensity_category propensity_sku propensity_price \
-    --log-name "${VERSION}" \
-    --accelerator gpu \
-    --devices 0 \
-    --disable-relevant-clients-check
+    --num-days 1 7 30 60 90 \

@@ -28,6 +28,9 @@ from multi_task.constants import (
 from multi_task.utils import (
     parse_to_array,
 )
+from multi_task.gpu_allocator import (
+    GPUAllocator,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
@@ -47,6 +50,7 @@ class BehavioralDataModule(pl.LightningDataModule):
         target_calculators: List[TargetCalculator],
         batch_size: int,
         num_workers: int,
+        gpu_allocator: GPUAllocator,
     ) -> None:
         super().__init__()
         self.batch_size = batch_size
@@ -55,6 +59,7 @@ class BehavioralDataModule(pl.LightningDataModule):
         self.id_mapper = id_mapper
         self.target_data = target_data
         self.target_calculators = target_calculators
+        self.gpu_allocator = gpu_allocator
         
         self.properties_dict: Dict[int, Dict[str, object]] = {}
         self._load_properties_dict()
@@ -81,6 +86,8 @@ class BehavioralDataModule(pl.LightningDataModule):
                 properties_dict=self.properties_dict,
                 mode="validation",
             )
+            
+            self.gpu_allocator.release_gpu_memory()
 
     def _load_properties_dict(self) -> None:
         """

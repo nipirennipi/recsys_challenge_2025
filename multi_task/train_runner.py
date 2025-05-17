@@ -46,6 +46,9 @@ from multi_task.preprocess_data import (
 from data_utils.constants import (
     EventTypes,
 )
+from multi_task.gpu_allocator import (
+    GPUAllocator,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -78,14 +81,8 @@ def run_training(
         neptune_logger (NeptuneLogger): logger instance where training information is logged
     """
     
-    # for task in tasks:
-    #     logger.info("Constructing task specific data structures")
-    #     task_settings = task_constructor.construct_task(task=task)
-
-    #     logger.info("Transforming client ids")
-    #     transformed_client_ids = transform_client_ids(
-    #         task=task, client_ids=client_ids, data_dir=data_dir
-    #     )
+    gpu_allocator = GPUAllocator(22, devices)
+    gpu_allocator.allocate_gpu_memory()
 
     task_settings = [
         task_constructor.construct_task(task=task) for task in tasks
@@ -101,6 +98,7 @@ def run_training(
         target_calculators=target_calculators,
         batch_size=BATCH_SIZE,
         num_workers=num_workers,
+        gpu_allocator=gpu_allocator,
     )
 
     sku_vocab_size = id_mapper.sku_vocab_size()
