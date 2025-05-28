@@ -1,9 +1,11 @@
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import logging
 import pickle
 from typing import Dict, Tuple, List, Set
 from torch.utils.data import Dataset
+from datetime import datetime
 
 from data_utils.data_dir import DataDir
 from tqdm import tqdm
@@ -27,6 +29,8 @@ from multi_task.constants import (
     MAX_SEQUENCE_LENGTH,
     QUERY_MIN_VALUE,
     QUERY_MAX_VALUE,
+    BATCH_SIZE,
+    GROUP_SIZE,
 )
 from multi_task.utils import (
     parse_to_array,
@@ -50,6 +54,8 @@ class BehavioralDataset(Dataset):
         target_df: pd.DataFrame,
         target_calculators: List[TargetCalculator],
         properties_dict: Dict[int, Dict[str, object]],
+        item_features_dict: Dict[int, Dict[datetime, np.ndarray]],
+        item_features_dim: int,
         mode: str = "train",
     ) -> None:
         super().__init__()
@@ -59,58 +65,71 @@ class BehavioralDataset(Dataset):
         self.target_df = target_df
         self.target_calculators = target_calculators
         self.properties_dict = properties_dict
+        self.item_features_dict = item_features_dict
+        self.item_features_dim = item_features_dim
+        self.PAD_VALUE_ITEM_FEATURES = np.zeros(
+            self.item_features_dim, 
+            dtype=np.float32
+        )
         self.mode = mode
         
+        save_dir = self.data_dir._target_dir
+        if self.mode == "train":
+            self.ids_file = save_dir / "train_ids.txt"
+            self.sequence_file = save_dir / "train_sequence.parquet"
+        else:
+            self.ids_file = save_dir / "relevant_ids.txt"
+            self.sequence_file = save_dir / "relevant_sequence.parquet"
+
+        self.chunk_idx: int = -1
+        self.chunk_size: int = BATCH_SIZE * GROUP_SIZE
+        self.behavior_sequence_chunk: List = []
         self.client_ids: Set[int] = set()
-        self.behavior_sequence = []
         self._behavior_sequence()
 
-    def _load_behavior_sequence(self) -> bool:
-        save_dir = self.data_dir._target_dir
+    def _load_client_ids(self) -> bool:
+        if not self.ids_file.exists():
+            return False
         
-        if self.mode == "train":
-            logger.info(f"Attempting to load {self.mode} user behavior sequence")
-            ids_file = save_dir / "train_ids.pkl"
-            sequence_file = save_dir / "train_sequence.pkl"
-        else:
-            ids_file = save_dir / "relevant_ids.pkl"
-            sequence_file = save_dir / "relevant_sequence.pkl"
+        with open(self.ids_file, "r") as f:
+            for line in f:
+                self.client_ids.add(int(line.strip()))
+        return True
 
-        if ids_file.exists() and sequence_file.exists():
-            with open(ids_file, "rb") as f:
-                self.client_ids = pickle.load(f)
-
-            with open(sequence_file, "rb") as f:
-                self.behavior_sequence = pickle.load(f)
-            return True
-        logger.info(f"Behavior sequence not found in {save_dir}")
-        return False
+    def _stream_behavior_sequence(self, idx: int) -> None:
+        required_chunk_idx = idx // self.chunk_size
         
-    def _save_behavior_sequence(self) -> None:
+        if self.chunk_idx != required_chunk_idx or len(self.behavior_sequence_chunk) == 0:            
+            parquet_file = pq.ParquetFile(self.sequence_file)
+            table = parquet_file.read_row_group(required_chunk_idx)
+            self.behavior_sequence_chunk = table.to_pandas().to_dict("records")
+            self.chunk_idx = required_chunk_idx
+
+    def _save_client_ids(self) -> None:
         save_dir = self.data_dir._target_dir
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        if self.mode == "train":
-            ids_file = save_dir / "train_ids.pkl"
-            sequence_file = save_dir / "train_sequence.pkl"
-        else:
-            ids_file = save_dir / "relevant_ids.pkl"
-            sequence_file = save_dir / "relevant_sequence.pkl"
+        with open(self.ids_file, "w") as f:
+            for uid in self.client_ids:
+                f.write(f"{uid}\n")
+        
+    def _save_behavior_sequence(self, behavior_sequence: List) -> None:
+        save_dir = self.data_dir._target_dir
+        save_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(ids_file, "wb") as f:
-            pickle.dump(self.client_ids, f)
-
-        with open(sequence_file, "wb") as f:
-            pickle.dump(self.behavior_sequence, f)
+        pd.DataFrame(behavior_sequence).to_parquet(
+            self.sequence_file, 
+            row_group_size=self.chunk_size,
+        )
     
     def _behavior_sequence(self) -> None:
         """
         Construct the user's historical behavior sequence, including two types 
         of events: ADD_TO_CART and PRODUCT_BUY.
         """
-        if self._load_behavior_sequence():
+        if self._load_client_ids():
             logger.info("Behavior sequence already loaded, skipping construction.")
-            logger.info(f"Loaded behavior sequence for {len(self.client_ids)} clients")
+            logger.info(f"Stream load behavior sequence for {len(self.client_ids)} clients")
             return
         
         logger.info(f"Constructing {self.mode} user behavior sequence")
@@ -155,6 +174,7 @@ class BehavioralDataset(Dataset):
         
         self.client_ids = {client_behavior["client_id"] for client_behavior in behavior_sequence_entity}
         logger.info(f"Behavior sequence constructed for {len(self.client_ids)} clients")
+        behavior_sequence = []
         
         for client_behavior in tqdm(behavior_sequence_entity, desc="Processing behavior sequences"):
             client_id = client_behavior["client_id"]
@@ -170,6 +190,8 @@ class BehavioralDataset(Dataset):
                 ]:
                     sku = int(entity)
                     properties = self.properties_dict[sku]
+                    datetime = timestamp.floor('D')
+                    item_features = self.item_features_dict[sku][datetime]
                     sequence_sku_info.append({
                         "sku": sku,
                         "category": properties["category"],
@@ -177,6 +199,7 @@ class BehavioralDataset(Dataset):
                         "name": properties["name"],
                         "event_type": event_type,
                         "timestamp": timestamp,
+                        "features": item_features,
                     })
                 if event_type == EventTypes.PAGE_VISIT.get_index():
                     url = int(entity)
@@ -193,14 +216,15 @@ class BehavioralDataset(Dataset):
                         "timestamp": timestamp,
                     })
             
-            self.behavior_sequence.append({
+            behavior_sequence.append({
                 "client_id": client_id,
                 "sequence_sku": sequence_sku_info,
                 "sequence_url": sequence_url_info,
                 "sequence_query": sequence_query_info,
             })
         
-        self._save_behavior_sequence()
+        self._save_client_ids()
+        self._save_behavior_sequence(behavior_sequence)
         logger.info(f"Behavior sequence saved to {self.data_dir._target_dir}")
     
     def _pad_sequence(self, sequence: np.ndarray, pad_value: object) -> np.ndarray:
@@ -264,7 +288,9 @@ class BehavioralDataset(Dataset):
         return behavior_data
 
     def _getitem(self, idx, is_augmentation=False) -> tuple[np.ndarray, np.ndarray]:
-        client_id = self.behavior_sequence[idx]["client_id"]
+        self._stream_behavior_sequence(idx)
+        chunk_inner_idx = idx % self.chunk_size
+        client_id = self.behavior_sequence_chunk[chunk_inner_idx]["client_id"]
         if not is_augmentation and self.mode == "train":
             target = [
                 target_calculator.compute_target(
@@ -274,13 +300,14 @@ class BehavioralDataset(Dataset):
             ]
 
         # Get the behavior sequence for the client
-        sequence_sku_info = self.behavior_sequence[idx]["sequence_sku"]
-        sequence_url_info = self.behavior_sequence[idx]["sequence_url"]
-        sequence_query_info = self.behavior_sequence[idx]["sequence_query"]
+        sequence_sku_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_sku"]
+        sequence_url_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_url"]
+        sequence_query_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_query"]
 
         if is_augmentation:
             pad_sku = {"sku": PAD_VALUE_SKU, "category": PAD_VALUE_CATEGORY, "price": PAD_VALUE_PRICE,
-                       "name": PAD_VALUE_NAME, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None}
+                       "name": PAD_VALUE_NAME, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None, 
+                       "features": self.PAD_VALUE_ITEM_FEATURES}
             pad_url = {"url": PAD_VALUE_URL, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None}
             pad_query = {"query": PAD_VALUE_QUERY, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None}
 
@@ -303,14 +330,25 @@ class BehavioralDataset(Dataset):
             sequence_name = np.stack(
                 [item["name"] for item in sequence_sku_info],
                 axis=0,
+                dtype=np.float32,
             )
         else:
             sequence_name = np.expand_dims(PAD_VALUE_NAME, axis=0)
+        
+        if len(sequence_sku_info) > 0:
+            sequence_features = np.stack(
+                [item["features"] for item in sequence_sku_info],
+                axis=0,
+                dtype=np.float32,
+            )
+        else:
+            sequence_features = np.expand_dims(self.PAD_VALUE_ITEM_FEATURES, axis=0)
         
         if len(sequence_query_info) > 0:
             sequence_query = np.stack(
                 [query["query"] for query in sequence_query_info],
                 axis=0,
+                dtype=np.float32,
             )
         else:
             sequence_query = np.expand_dims(PAD_VALUE_QUERY, axis=0)
@@ -342,6 +380,9 @@ class BehavioralDataset(Dataset):
         sequence_category = self._pad_sequence(sequence_category, PAD_VALUE_CATEGORY)
         sequence_price = self._pad_sequence(sequence_price, PAD_VALUE_PRICE)
         sequence_name = self._pad_sequence(sequence_name, PAD_VALUE_NAME)
+        # logger.info(f"sequence_features.shape: {sequence_features.shape}")
+        # logger.info(f"PAD_VALUE_ITEM_FEATURES.shape: {self.PAD_VALUE_ITEM_FEATURES.shape}")
+        sequence_features = self._pad_sequence(sequence_features, self.PAD_VALUE_ITEM_FEATURES)
         sequence_event_type = self._pad_sequence(sequence_event_type, PAD_VALUE_EVENT_TYPE)
         sequence_url = self._pad_sequence(sequence_url, PAD_VALUE_URL)
         sequence_query = self._pad_sequence(sequence_query, PAD_VALUE_QUERY)
@@ -373,6 +414,7 @@ class BehavioralDataset(Dataset):
             sequence_category, 
             sequence_price, 
             sequence_name, 
+            sequence_features,
             sequence_event_type, 
             sequence_url,
             sequence_query,

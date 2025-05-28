@@ -27,6 +27,7 @@ ENTITY_COLUMN_NAME = "entity"
 
 # In competition settings these hyperparameters are fixed
 BATCH_SIZE = 128 * 48
+GROUP_SIZE = 100
 HIDDEN_SIZE_THIN = 2048
 HIDDEN_SIZE_WIDE = 4096
 LEARNING_RATE = 0.001

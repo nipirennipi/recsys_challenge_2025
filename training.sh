@@ -7,6 +7,6 @@ python -m training_pipeline.train \
     --tasks churn propensity_category propensity_sku \
     --log-name "${VERSION}" \
     --accelerator gpu \
-    --devices 3 \
+    --devices 1 \
     --score-dir "./${VERSION}/score" \
     --disable-relevant-clients-check

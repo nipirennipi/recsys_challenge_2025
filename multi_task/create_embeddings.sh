@@ -19,5 +19,5 @@ python -m multi_task.train \
     --tasks churn propensity_category propensity_sku propensity_price \
     --log-name "${VERSION}" \
     --accelerator gpu \
-    --devices 0 \
+    --devices 2 \
     --disable-relevant-clients-check

@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 import logging
 
 from typing import Dict, Tuple, List, Set
+from datetime import datetime
 from torch.utils.data import DataLoader
 
 from data_utils.data_dir import DataDir
@@ -62,7 +63,10 @@ class BehavioralDataModule(pl.LightningDataModule):
         self.gpu_allocator = gpu_allocator
         
         self.properties_dict: Dict[int, Dict[str, object]] = {}
+        self.item_features_dict: Dict[int, Dict[datetime, np.ndarray]] = {}
+        self.item_features_dim: int
         self._load_properties_dict()
+        self._load_item_features_dict()
 
     def setup(self, stage) -> None:
         if stage == "fit":
@@ -75,6 +79,8 @@ class BehavioralDataModule(pl.LightningDataModule):
                 target_df=self.target_data.train_df,
                 target_calculators=self.target_calculators,
                 properties_dict=self.properties_dict,
+                item_features_dict=self.item_features_dict,
+                item_features_dim=self.item_features_dim,
                 mode="train",
             )
 
@@ -84,6 +90,8 @@ class BehavioralDataModule(pl.LightningDataModule):
                 target_df=self.target_data.relevant_df,
                 target_calculators=self.target_calculators,
                 properties_dict=self.properties_dict,
+                item_features_dict=self.item_features_dict,
+                item_features_dim=self.item_features_dim,
                 mode="validation",
             )
             
@@ -113,6 +121,27 @@ class BehavioralDataModule(pl.LightningDataModule):
             }
             for _, row in properties.iterrows()
         }
+
+    def _load_item_features_dict(self) -> None:
+        """
+        Load item features from the item_features.parquet file.
+        Returns a dictionary with sku as the key and a dictionary of datetime to features as the value.
+        """
+        logger.info("Loading item features")
+        item_features = pd.read_parquet(self.data_dir.item_features_file)
+        item_features["features"] = item_features["features"].apply(
+            lambda x: np.log1p(x, dtype=np.float32)
+        )
+        
+        self.item_features_dict = (
+            item_features
+            .groupby("sku")[["date", "features"]]
+            .apply(lambda g: dict(zip(g["date"], g["features"])))
+            .to_dict()
+        )
+            
+        self.item_features_dim = len(next(iter(next(iter(self.item_features_dict.values())).values())))
+        logger.info(f"Item features dimension: {self.item_features_dim}")
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

@@ -81,7 +81,7 @@ def run_training(
         neptune_logger (NeptuneLogger): logger instance where training information is logged
     """
     
-    gpu_allocator = GPUAllocator(22, devices)
+    gpu_allocator = GPUAllocator(20, devices)
     gpu_allocator.allocate_gpu_memory()
 
     task_settings = [
@@ -105,6 +105,7 @@ def run_training(
     category_vocab_size = id_mapper.category_vocab_size()
     event_type_vocab_size = len(EventTypes)
     url_vocab_size = id_mapper.url_vocab_size()
+    item_features_dim = data.item_features_dim
     loss_fn = [
         task_setting.loss_fn for task_setting in task_settings
     ]
@@ -117,6 +118,7 @@ def run_training(
         category_vocab_size=category_vocab_size,
         event_type_vocab_size=event_type_vocab_size,
         url_vocab_size=url_vocab_size,
+        item_features_dim = item_features_dim,
         output_dims=out_put_dims,
         hidden_size_thin=HIDDEN_SIZE_THIN,
         hidden_size_wide=HIDDEN_SIZE_WIDE,

@@ -220,7 +220,8 @@ class SequenceModeling(nn.Module):
         sku_vocab_size: int, 
         category_vocab_size: int, 
         event_type_vocab_size: int, 
-        url_vocab_size: int
+        url_vocab_size: int,
+        item_features_dim: int,
     ):
         super().__init__()
         self.sku_embedding_layer = SKUEmbeddingLayer(
@@ -236,6 +237,7 @@ class SequenceModeling(nn.Module):
             + CATEGORY_EMBEDDING_DIM 
             + EVENT_TYPE_EMBEDDING_DIM 
             + NAME_EMBEDDING_DIM
+            + item_features_dim
             + 1
         )
         self.lstm = nn.LSTM(
@@ -271,6 +273,7 @@ class SequenceModeling(nn.Module):
             sequence_category, 
             sequence_price, 
             sequence_name, 
+            sequence_features,
             sequence_event_type, 
             sequence_url,
             sequence_query,
@@ -282,7 +285,8 @@ class SequenceModeling(nn.Module):
         embeddings = self.sku_embedding_layer(sequence_sku, sequence_category, sequence_event_type)
         price_embedding = sequence_price.unsqueeze(-1)
         name_embedding = sequence_name
-        embeddings = torch.cat([embeddings, price_embedding, name_embedding], dim=-1)
+        features_embedding = sequence_features
+        embeddings = torch.cat([embeddings, price_embedding, name_embedding, features_embedding], dim=-1)
 
         # Pass through LSTM
         packed_input = nn.utils.rnn.pack_padded_sequence(
@@ -446,6 +450,7 @@ class UniversalModel(pl.LightningModule):
         category_vocab_size: int,
         event_type_vocab_size: int,
         url_vocab_size: int,
+        item_features_dim: int,
         output_dims: List[int],
         hidden_size_thin: int,
         hidden_size_wide: int,
@@ -474,6 +479,7 @@ class UniversalModel(pl.LightningModule):
             category_vocab_size=category_vocab_size,
             event_type_vocab_size=event_type_vocab_size,
             url_vocab_size=url_vocab_size,
+            item_features_dim=item_features_dim,
         )
         self.mlp_projector = MLPProjector()
         # self.metric_calculator = metric_calculator

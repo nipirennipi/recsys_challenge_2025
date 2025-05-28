@@ -1,5 +1,8 @@
 from pathlib import Path
-from data_utils.constants import PROPERTIES_FILE
+from data_utils.constants import (
+    PROPERTIES_FILE,
+    ITEM_FEATURES_FILE,
+)
 
 
 class ChallengeDataDirectoryError(Exception):
@@ -27,6 +30,7 @@ class DataDir:
         self._input_dir = data_dir / "input"
         self._target_dir = data_dir / "target"
         self._properties_file = data_dir / PROPERTIES_FILE
+        self._item_features_file = data_dir / ITEM_FEATURES_FILE
 
         self._validate_data_dir()
 
@@ -57,6 +61,13 @@ class DataDir:
         Path to product properties file.
         """
         return self._properties_file
+
+    @property
+    def item_features_file(self) -> Path:
+        """
+        Path to item features file.
+        """
+        return self._item_features_file
 
     def _validate_data_dir(self) -> None:
         """
