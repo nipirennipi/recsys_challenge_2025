@@ -24,6 +24,7 @@ from multi_task.constants import (
     PAD_VALUE_PRICE,
     PAD_VALUE_NAME,
     PAD_VALUE_EVENT_TYPE,
+    PAD_VALUE_TIME_FEAT,
     PAD_VALUE_URL,
     PAD_VALUE_QUERY,
     MAX_SEQUENCE_LENGTH,
@@ -54,8 +55,8 @@ class BehavioralDataset(Dataset):
         target_df: pd.DataFrame,
         target_calculators: List[TargetCalculator],
         properties_dict: Dict[int, Dict[str, object]],
-        item_features_dict: Dict[int, Dict[datetime, np.ndarray]],
-        item_features_dim: int,
+        item_stat_feat_dict: Dict[int, Dict[datetime, np.ndarray]],
+        item_stat_feat_dim: int,
         mode: str = "train",
     ) -> None:
         super().__init__()
@@ -65,13 +66,16 @@ class BehavioralDataset(Dataset):
         self.target_df = target_df
         self.target_calculators = target_calculators
         self.properties_dict = properties_dict
-        self.item_features_dict = item_features_dict
-        self.item_features_dim = item_features_dim
-        self.PAD_VALUE_ITEM_FEATURES = np.zeros(
-            self.item_features_dim, 
+        self.item_stat_feat_dict = item_stat_feat_dict
+        self.item_stat_feat_dim = item_stat_feat_dim
+        self.PAD_VALUE_STAT_FEAT = np.zeros(
+            self.item_stat_feat_dim, 
             dtype=np.float32
         )
         self.mode = mode
+        
+        self.user_features_dict: Dict[int, np.ndarray] = {}
+        self.user_features_dim: int
         
         save_dir = self.data_dir._target_dir
         if self.mode == "train":
@@ -86,6 +90,38 @@ class BehavioralDataset(Dataset):
         self.behavior_sequence_chunk: List = []
         self.client_ids: Set[int] = set()
         self._behavior_sequence()
+        self._load_user_features_dict()
+
+    def _load_user_features_dict(self) -> None:
+        """
+        Load user features from the user_features.parquet file.
+        Returns a dictionary with client as the key to features as the value.
+        """
+        if self.mode == "train":
+            user_features = pd.read_parquet(self.data_dir.input_dir / "user_features.parquet")
+        else:
+            user_features = pd.read_parquet(self.data_dir.data_dir / "user_features.parquet")
+            
+        # Normalize user features
+        for col in user_features.columns:
+            # Apply normalization for columns containing "_days_since_" or "_time_diff_"
+            if "_days_since_" in col or "_time_diff_" in col:
+                max_value = user_features[col].max()
+                user_features[col] = (max_value - user_features[col]) / max_value 
+            
+            # Apply np.log1p to columns containing "_count_"
+            if "_count_" in col:
+                user_features[col] = np.log1p(user_features[col], dtype=np.float32)
+            
+        # Concatenate all columns except "client_id" into a single np.array
+        feature_cols = [col for col in user_features.columns if col != "client_id"]
+        feature_array = user_features[feature_cols].to_numpy(dtype=np.float32)
+        user_features["features"] = list(feature_array)
+        
+        self.user_features_dict = user_features.set_index("client_id")["features"].to_dict()    
+        self.user_features_dim = len(next(iter(self.user_features_dict.values())))
+        logger.info(f"Loaded statistic features for {len(self.user_features_dict)} users")
+        logger.info(f"User statistic features dimension: {self.user_features_dim}")
 
     def _load_client_ids(self) -> bool:
         if not self.ids_file.exists():
@@ -191,7 +227,7 @@ class BehavioralDataset(Dataset):
                     sku = int(entity)
                     properties = self.properties_dict[sku]
                     datetime = timestamp.floor('D')
-                    item_features = self.item_features_dict[sku][datetime]
+                    stat_feat = self.item_stat_feat_dict[sku][datetime]
                     sequence_sku_info.append({
                         "sku": sku,
                         "category": properties["category"],
@@ -199,7 +235,7 @@ class BehavioralDataset(Dataset):
                         "name": properties["name"],
                         "event_type": event_type,
                         "timestamp": timestamp,
-                        "features": item_features,
+                        "features": stat_feat,
                     })
                 if event_type == EventTypes.PAGE_VISIT.get_index():
                     url = int(entity)
@@ -273,6 +309,40 @@ class BehavioralDataset(Dataset):
 
         return sequence[:max_length]
 
+    def _generate_timestamp_features(self, sequence_sku_info: List[dict]) -> None:
+        total_events = len(sequence_sku_info)
+        if total_events == 0:
+            return
+        
+        for idx, item in enumerate(sequence_sku_info):
+            timestamp = item["timestamp"]
+            if timestamp is None:
+                logger.info(f"sequence_sku_info: {sequence_sku_info}")
+                continue
+            hour_of_day = timestamp.hour  # Hour of the day (0-23)
+            day_of_week = timestamp.weekday()  # Day of the week (0-6)
+            is_weekend = 1 if day_of_week >= 5 else 0  # Is weekend (0/1)
+            
+            # Time of day categories
+            if 5 <= timestamp.hour < 8:
+                time_of_day = 0  # Early morning
+            elif 8 <= timestamp.hour < 12:
+                time_of_day = 1  # Morning
+            elif 12 <= timestamp.hour < 14:
+                time_of_day = 2  # Noon
+            elif 14 <= timestamp.hour < 18:
+                time_of_day = 3  # Afternoon
+            elif 18 <= timestamp.hour < 21:
+                time_of_day = 4  # Evening
+            else:
+                time_of_day = 5  # Night
+
+            # Add event position in the sequence
+            event_position = (idx + 1) / total_events  # Position in the sequence (0-1)
+            
+            time_feat = [hour_of_day, day_of_week, is_weekend, time_of_day, event_position]
+            sequence_sku_info[idx]["time_feat"] = np.array(time_feat, dtype=np.float32)
+
     def __len__(self) -> int:
         return len(self.client_ids)
 
@@ -300,14 +370,17 @@ class BehavioralDataset(Dataset):
             ]
 
         # Get the behavior sequence for the client
-        sequence_sku_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_sku"]
-        sequence_url_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_url"]
-        sequence_query_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_query"]
+        sequence_sku_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_sku"].copy()
+        sequence_url_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_url"].copy()
+        sequence_query_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_query"].copy()
+
+        # Generate timestamp-related features for sequence_sku_info
+        self._generate_timestamp_features(sequence_sku_info)
 
         if is_augmentation:
             pad_sku = {"sku": PAD_VALUE_SKU, "category": PAD_VALUE_CATEGORY, "price": PAD_VALUE_PRICE,
                        "name": PAD_VALUE_NAME, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None, 
-                       "features": self.PAD_VALUE_ITEM_FEATURES}
+                       "features": self.PAD_VALUE_STAT_FEAT, "time_feat": PAD_VALUE_TIME_FEAT}
             pad_url = {"url": PAD_VALUE_URL, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None}
             pad_query = {"query": PAD_VALUE_QUERY, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None}
 
@@ -332,17 +405,20 @@ class BehavioralDataset(Dataset):
                 axis=0,
                 dtype=np.float32,
             )
-        else:
-            sequence_name = np.expand_dims(PAD_VALUE_NAME, axis=0)
-        
-        if len(sequence_sku_info) > 0:
-            sequence_features = np.stack(
+            sequence_stat_feat = np.stack(
                 [item["features"] for item in sequence_sku_info],
                 axis=0,
                 dtype=np.float32,
             )
+            sequence_time_feat = np.stack(
+                [item["time_feat"] for item in sequence_sku_info],
+                axis=0,
+                dtype=np.float32,
+            )
         else:
-            sequence_features = np.expand_dims(self.PAD_VALUE_ITEM_FEATURES, axis=0)
+            sequence_name = np.expand_dims(PAD_VALUE_NAME, axis=0)
+            sequence_stat_feat = np.expand_dims(self.PAD_VALUE_STAT_FEAT, axis=0)
+            sequence_time_feat = np.expand_dims(PAD_VALUE_TIME_FEAT, axis=0)
         
         if len(sequence_query_info) > 0:
             sequence_query = np.stack(
@@ -380,10 +456,11 @@ class BehavioralDataset(Dataset):
         sequence_category = self._pad_sequence(sequence_category, PAD_VALUE_CATEGORY)
         sequence_price = self._pad_sequence(sequence_price, PAD_VALUE_PRICE)
         sequence_name = self._pad_sequence(sequence_name, PAD_VALUE_NAME)
-        # logger.info(f"sequence_features.shape: {sequence_features.shape}")
+        # logger.info(f"sequence_stat_feat.shape: {sequence_stat_feat.shape}")
         # logger.info(f"PAD_VALUE_ITEM_FEATURES.shape: {self.PAD_VALUE_ITEM_FEATURES.shape}")
-        sequence_features = self._pad_sequence(sequence_features, self.PAD_VALUE_ITEM_FEATURES)
+        sequence_stat_feat = self._pad_sequence(sequence_stat_feat, self.PAD_VALUE_STAT_FEAT)
         sequence_event_type = self._pad_sequence(sequence_event_type, PAD_VALUE_EVENT_TYPE)
+        sequence_time_feat = self._pad_sequence(sequence_time_feat, PAD_VALUE_TIME_FEAT)
         sequence_url = self._pad_sequence(sequence_url, PAD_VALUE_URL)
         sequence_query = self._pad_sequence(sequence_query, PAD_VALUE_QUERY)
         # logger.info(f"client_id: {client_id}")
@@ -407,6 +484,9 @@ class BehavioralDataset(Dataset):
         # logger.info(f"sequence_url.dtype: {sequence_url.dtype}")
         # logger.info(f"sequence_query.dtype: {sequence_query.dtype}")
 
+        # Get user features
+        user_features = self.user_features_dict[client_id]
+
         # Combine the structured data into a single array or return as a tuple
         behavior_data = (
             client_id,
@@ -414,13 +494,15 @@ class BehavioralDataset(Dataset):
             sequence_category, 
             sequence_price, 
             sequence_name, 
-            sequence_features,
+            sequence_stat_feat,
             sequence_event_type, 
+            sequence_time_feat,
             sequence_url,
             sequence_query,
             sequence_sku_length, 
             sequence_url_length,
             sequence_query_length,
+            user_features,
         )
         
         # if np.any(sequence_name > 1) or np.any(sequence_name < -1):

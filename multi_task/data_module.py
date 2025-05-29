@@ -71,27 +71,27 @@ class BehavioralDataModule(pl.LightningDataModule):
     def setup(self, stage) -> None:
         if stage == "fit":
 
-            logger.info("Constructing datasets")
-
+            logger.info("Constructing training dataset")
             self.train_data = BehavioralDataset(
                 data_dir=self.data_dir,
                 id_mapper=self.id_mapper,
                 target_df=self.target_data.train_df,
                 target_calculators=self.target_calculators,
                 properties_dict=self.properties_dict,
-                item_features_dict=self.item_features_dict,
-                item_features_dim=self.item_features_dim,
+                item_stat_feat_dict=self.item_features_dict,
+                item_stat_feat_dim=self.item_features_dim,
                 mode="train",
             )
 
+            logger.info("Constructing validation dataset")
             self.validation_data = BehavioralDataset(
                 data_dir=self.data_dir,
                 id_mapper=self.id_mapper,
                 target_df=self.target_data.relevant_df,
                 target_calculators=self.target_calculators,
                 properties_dict=self.properties_dict,
-                item_features_dict=self.item_features_dict,
-                item_features_dim=self.item_features_dim,
+                item_stat_feat_dict=self.item_features_dict,
+                item_stat_feat_dim=self.item_features_dim,
                 mode="validation",
             )
             
@@ -113,25 +113,18 @@ class BehavioralDataModule(pl.LightningDataModule):
         properties["price"] = (properties["price"] - PRICE_MIN_VALUE) / (PRICE_MAX_VALUE - PRICE_MIN_VALUE)
         properties["price"] = properties["price"].apply(lambda x: np.clip(x, 0, 1).astype(np.float32))
 
-        self.properties_dict = {
-            row["sku"]: {
-                "category": row["category"],
-                "price": row["price"],
-                "name": row["name"],
-            }
-            for _, row in properties.iterrows()
-        }
+        self.properties_dict = properties.set_index("sku")[["category", "price", "name"]].to_dict()
 
     def _load_item_features_dict(self) -> None:
         """
         Load item features from the item_features.parquet file.
         Returns a dictionary with sku as the key and a dictionary of datetime to features as the value.
         """
-        logger.info("Loading item features")
+        logger.info("Loading item statistic features")
         item_features = pd.read_parquet(self.data_dir.item_features_file)
-        item_features["features"] = item_features["features"].apply(
-            lambda x: np.log1p(x, dtype=np.float32)
-        )
+        feature_array = np.stack(item_features["features"].values)
+        feature_array = np.log1p(feature_array, dtype=np.float32)
+        item_features["features"] = list(feature_array)
         
         self.item_features_dict = (
             item_features
@@ -141,7 +134,7 @@ class BehavioralDataModule(pl.LightningDataModule):
         )
             
         self.item_features_dim = len(next(iter(next(iter(self.item_features_dict.values())).values())))
-        logger.info(f"Item features dimension: {self.item_features_dim}")
+        logger.info(f"Item statistic features dimension: {self.item_features_dim}")
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

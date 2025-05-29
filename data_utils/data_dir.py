@@ -32,7 +32,7 @@ class DataDir:
         self._properties_file = data_dir / PROPERTIES_FILE
         self._item_features_file = data_dir / ITEM_FEATURES_FILE
 
-        self._validate_data_dir()
+        # self._validate_data_dir()
 
     @property
     def data_dir(self) -> Path:

@@ -24,6 +24,7 @@ from multi_task.data_module import (
 from multi_task.constants import (
     BATCH_SIZE,
     MAX_EMBEDDING_DIM,
+    EMBEDDING_DIM,
     HIDDEN_SIZE_THIN,
     HIDDEN_SIZE_WIDE,
     LEARNING_RATE,
@@ -105,7 +106,7 @@ def run_training(
     category_vocab_size = id_mapper.category_vocab_size()
     event_type_vocab_size = len(EventTypes)
     url_vocab_size = id_mapper.url_vocab_size()
-    item_features_dim = data.item_features_dim
+    item_stat_feat_dim = data.item_features_dim
     loss_fn = [
         task_setting.loss_fn for task_setting in task_settings
     ]
@@ -118,7 +119,7 @@ def run_training(
         category_vocab_size=category_vocab_size,
         event_type_vocab_size=event_type_vocab_size,
         url_vocab_size=url_vocab_size,
-        item_features_dim = item_features_dim,
+        item_stat_feat_dim=item_stat_feat_dim,
         output_dims=out_put_dims,
         hidden_size_thin=HIDDEN_SIZE_THIN,
         hidden_size_wide=HIDDEN_SIZE_WIDE,

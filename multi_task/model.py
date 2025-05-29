@@ -27,6 +27,7 @@ from multi_task.constants import (
     CONTRASTIVE_TEMP,
     CONTRASTIVE_LAMBDA,
     MLP_PROJECTION_DIM,
+    TIME_FEAT_DIM,
 )
 from multi_task.utils import (
     record_embeddings,
@@ -221,7 +222,7 @@ class SequenceModeling(nn.Module):
         category_vocab_size: int, 
         event_type_vocab_size: int, 
         url_vocab_size: int,
-        item_features_dim: int,
+        item_stat_feat_dim: int,
     ):
         super().__init__()
         self.sku_embedding_layer = SKUEmbeddingLayer(
@@ -237,7 +238,8 @@ class SequenceModeling(nn.Module):
             + CATEGORY_EMBEDDING_DIM 
             + EVENT_TYPE_EMBEDDING_DIM 
             + NAME_EMBEDDING_DIM
-            + item_features_dim
+            + TIME_FEAT_DIM
+            + item_stat_feat_dim
             + 1
         )
         self.lstm = nn.LSTM(
@@ -273,20 +275,26 @@ class SequenceModeling(nn.Module):
             sequence_category, 
             sequence_price, 
             sequence_name, 
-            sequence_features,
+            sequence_stat_feat,
             sequence_event_type, 
+            sequence_time_feat,
             sequence_url,
             sequence_query,
             sequence_sku_length,
             sequence_url_length,
             sequence_query_length,
+            user_features,
         ) = x
         # Generate embeddings for the input sequences
         embeddings = self.sku_embedding_layer(sequence_sku, sequence_category, sequence_event_type)
         price_embedding = sequence_price.unsqueeze(-1)
         name_embedding = sequence_name
-        features_embedding = sequence_features
-        embeddings = torch.cat([embeddings, price_embedding, name_embedding, features_embedding], dim=-1)
+        stat_feat_embedding = sequence_stat_feat
+        time_feat_embedding = sequence_time_feat
+        embeddings = torch.cat(
+            [embeddings, price_embedding, name_embedding, stat_feat_embedding, time_feat_embedding], 
+            dim=-1
+        )
 
         # Pass through LSTM
         packed_input = nn.utils.rnn.pack_padded_sequence(
@@ -341,7 +349,7 @@ class SequenceModeling(nn.Module):
             )
 
         # Concatenate lstm_output, url_embedding, and query_embedding
-        combined_feat = torch.cat([lstm_output, url_embedding, query_embedding], dim=-1)
+        combined_feat = torch.cat([user_features, lstm_output, url_embedding, query_embedding], dim=-1)
         # Log if combined_feat contains values greater than 10000 or less than -10000
         # if torch.any(combined_feat > 100) or torch.any(combined_feat < -100):
         #     logger.info(
@@ -450,7 +458,7 @@ class UniversalModel(pl.LightningModule):
         category_vocab_size: int,
         event_type_vocab_size: int,
         url_vocab_size: int,
-        item_features_dim: int,
+        item_stat_feat_dim: int,
         output_dims: List[int],
         hidden_size_thin: int,
         hidden_size_wide: int,
@@ -479,7 +487,7 @@ class UniversalModel(pl.LightningModule):
             category_vocab_size=category_vocab_size,
             event_type_vocab_size=event_type_vocab_size,
             url_vocab_size=url_vocab_size,
-            item_features_dim=item_features_dim,
+            item_stat_feat_dim=item_stat_feat_dim,
         )
         self.mlp_projector = MLPProjector()
         # self.metric_calculator = metric_calculator
