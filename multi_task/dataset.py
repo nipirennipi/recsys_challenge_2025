@@ -104,14 +104,25 @@ class BehavioralDataset(Dataset):
             
         # Normalize user features
         for col in user_features.columns:
-            # Apply normalization for columns containing "_days_since_" or "_time_diff_"
-            if "_days_since_" in col or "_time_diff_" in col:
+            # Apply normalization for columns
+            if any(key in col for key in ["_days_since_", "_time_diff_"]):
                 max_value = user_features[col].max()
                 user_features[col] = (max_value - user_features[col]) / max_value 
             
-            # Apply np.log1p to columns containing "_count_"
-            if "_count_" in col:
+            # Apply np.log1p to columns
+            if any(key in col for key in [
+                "_count_", "_price_tier_", "_unique_price_tiers"
+            ]):
                 user_features[col] = np.log1p(user_features[col], dtype=np.float32)
+            
+            # Applu min-max scaling for columns
+            if any(key in col for key in [
+                "_price_mean", "_price_median", "_price_std", "_price_max", "_price_min"
+            ]):
+                min_value = user_features[col].min()
+                max_value = user_features[col].max()
+                user_features[col] = (user_features[col] - min_value) / (max_value - min_value)
+                user_features[col] = user_features[col].fillna(-1).astype(np.float32)  
             
         # Concatenate all columns except "client_id" into a single np.array
         feature_cols = [col for col in user_features.columns if col != "client_id"]
@@ -320,27 +331,17 @@ class BehavioralDataset(Dataset):
                 logger.info(f"sequence_sku_info: {sequence_sku_info}")
                 continue
             hour_of_day = timestamp.hour  # Hour of the day (0-23)
+            hour_sin = np.sin(2 * np.pi * hour_of_day / 24.)
+            hour_cos = np.cos(2 * np.pi * hour_of_day / 24.)
             day_of_week = timestamp.weekday()  # Day of the week (0-6)
+            day_sin = np.sin(2 * np.pi * day_of_week / 7.)
+            day_cos = np.cos(2 * np.pi * day_of_week / 7.)
             is_weekend = 1 if day_of_week >= 5 else 0  # Is weekend (0/1)
             
-            # Time of day categories
-            if 5 <= timestamp.hour < 8:
-                time_of_day = 0  # Early morning
-            elif 8 <= timestamp.hour < 12:
-                time_of_day = 1  # Morning
-            elif 12 <= timestamp.hour < 14:
-                time_of_day = 2  # Noon
-            elif 14 <= timestamp.hour < 18:
-                time_of_day = 3  # Afternoon
-            elif 18 <= timestamp.hour < 21:
-                time_of_day = 4  # Evening
-            else:
-                time_of_day = 5  # Night
-
             # Add event position in the sequence
-            event_position = (idx + 1) / total_events  # Position in the sequence (0-1)
+            # event_position = (idx + 1) / total_events  # Position in the sequence (0-1)
             
-            time_feat = [hour_of_day, day_of_week, is_weekend, time_of_day, event_position]
+            time_feat = [hour_sin, hour_cos, day_sin, day_cos, is_weekend]
             sequence_sku_info[idx]["time_feat"] = np.array(time_feat, dtype=np.float32)
 
     def __len__(self) -> int:

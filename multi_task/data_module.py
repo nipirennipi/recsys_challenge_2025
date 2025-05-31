@@ -113,7 +113,11 @@ class BehavioralDataModule(pl.LightningDataModule):
         properties["price"] = (properties["price"] - PRICE_MIN_VALUE) / (PRICE_MAX_VALUE - PRICE_MIN_VALUE)
         properties["price"] = properties["price"].apply(lambda x: np.clip(x, 0, 1).astype(np.float32))
 
-        self.properties_dict = properties.set_index("sku")[["category", "price", "name"]].to_dict()
+        self.properties_dict = (
+            properties[["sku", "category", "price", "name"]]
+            .set_index("sku")
+            .to_dict(orient='index')
+        )
 
     def _load_item_features_dict(self) -> None:
         """
