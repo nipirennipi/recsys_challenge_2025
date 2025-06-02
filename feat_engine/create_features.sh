@@ -10,5 +10,6 @@ DATA_DIR="/data/lyjiang/RecSys_Challenge_2025"
 
 python -m feat_engine.user_features.create_user_features \
     --data-dir "${DATA_DIR}" \
+    --target-dir "/data/lyjiang/RecSys_Challenge_2025" \
     --features-dir "${DATA_DIR}" \
     --num-days 3 7 30 60

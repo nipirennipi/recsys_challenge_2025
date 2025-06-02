@@ -91,6 +91,12 @@ class BehavioralDataset(Dataset):
         self.client_ids: Set[int] = set()
         self._behavior_sequence()
         self._load_user_features_dict()
+        
+        # Release memory
+        self.properties_dict.clear()
+        logger.info("Released memory for properties_dict")
+        self.item_stat_feat_dict.clear()
+        logger.info("Released memory for item_stat_feat_dict")
 
     def _load_user_features_dict(self) -> None:
         """
@@ -109,21 +115,27 @@ class BehavioralDataset(Dataset):
                 max_value = user_features[col].max()
                 user_features[col] = (max_value - user_features[col]) / max_value 
             
-            # Apply np.log1p to columns
-            if any(key in col for key in [
-                "_count_", "_price_tier_", "_unique_price_tiers"
+            # Apply np.log1p and min-max scaling to columns
+            elif any(key in col for key in [
+                "_count_", "_price_tier_", "_unique_price_tiers", "_unique_categories"
             ]):
                 user_features[col] = np.log1p(user_features[col], dtype=np.float32)
+                min_value = user_features[col].min()
+                max_value = user_features[col].max()
+                user_features[col] = (user_features[col] - min_value) / (max_value - min_value)
             
-            # Applu min-max scaling for columns
-            if any(key in col for key in [
+            # Apply min-max scaling and fillna with -1 for columns
+            elif any(key in col for key in [
                 "_price_mean", "_price_median", "_price_std", "_price_max", "_price_min"
             ]):
                 min_value = user_features[col].min()
                 max_value = user_features[col].max()
                 user_features[col] = (user_features[col] - min_value) / (max_value - min_value)
                 user_features[col] = user_features[col].fillna(-1).astype(np.float32)  
-            
+        
+        # Defragmentation
+        user_features = user_features.copy()
+        
         # Concatenate all columns except "client_id" into a single np.array
         feature_cols = [col for col in user_features.columns if col != "client_id"]
         feature_array = user_features[feature_cols].to_numpy(dtype=np.float32)
@@ -281,6 +293,9 @@ class BehavioralDataset(Dataset):
             sequence (np.ndarray): The input sequence to be padded.
             pad_value (object): The value used for padding.
         """
+        if len(sequence) >= MAX_SEQUENCE_LENGTH:
+            return sequence[-MAX_SEQUENCE_LENGTH:]
+        
         full_shape = (MAX_SEQUENCE_LENGTH,)  + sequence.shape[1:]
         padded_sequence = np.full(full_shape, pad_value, dtype=sequence.dtype)
         length = min(len(sequence), MAX_SEQUENCE_LENGTH)
@@ -396,7 +411,7 @@ class BehavioralDataset(Dataset):
         # Convert sequence_info to a structured format (e.g., numpy arrays)
         sequence_sku = np.array([item["sku"] for item in sequence_sku_info], dtype=np.int64)
         sequence_category = np.array([item["category"] for item in sequence_sku_info], dtype=np.int64)
-        sequence_price = np.array([item["price"] for item in sequence_sku_info], dtype=np.int64)
+        sequence_price = np.array([item["price"] for item in sequence_sku_info], dtype=np.float32)
         sequence_event_type = np.array([item["event_type"] for item in sequence_sku_info], dtype=np.int64)
         sequence_url = np.array([item["url"] for item in sequence_url_info], dtype=np.int64)    
         
@@ -487,6 +502,15 @@ class BehavioralDataset(Dataset):
 
         # Get user features
         user_features = self.user_features_dict[client_id]
+
+        # logger.info(f"client_id: {client_id}")
+        # logger.info(f"sequence_sku: {sequence_sku}")
+        # logger.info(f"sequence_category: {sequence_category}")
+        # logger.info(f"sequence_price: {sequence_price}")
+        # logger.info(f"sequence_event_type: {sequence_event_type}")
+        # sequence_timestamp = [item["timestamp"] for item in sequence_sku_info]
+        # logger.info(f"sequence_timestamp: {sequence_timestamp}")
+        # logger.info(f"sequence_time_feat: {sequence_time_feat}")
 
         # Combine the structured data into a single array or return as a tuple
         behavior_data = (

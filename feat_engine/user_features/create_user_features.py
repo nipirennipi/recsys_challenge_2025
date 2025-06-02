@@ -6,9 +6,11 @@ from functools import reduce
 from scipy.stats import entropy
 import pandas as pd
 import numpy as np
+import time
 
 from feat_engine.user_features.constants import (
     EventTypes,
+    PropensityTasks,
 )
 from data_utils.data_dir import DataDir
 
@@ -25,7 +27,11 @@ def load_events(data_dir: DataDir, event_type: EventTypes) -> pd.DataFrame:
     return event_df
 
 
-def create_features(data_dir: DataDir, num_days: List[int],) -> pd.DataFrame:
+def create_features(
+    data_dir: DataDir, 
+    target_dir: DataDir, 
+    num_days: List[int]
+) -> pd.DataFrame:
     logger.info("Creating features for user")
     
     # Load data from each event file
@@ -78,9 +84,25 @@ def create_features(data_dir: DataDir, num_days: List[int],) -> pd.DataFrame:
     properties_dict = load_properties_dict(data_dir)
     # Statistical features: price propensity
     logger.info("Calculating price propensity features")
-    price_stats = create_price_propensity_features(events, client_ids, END_TIME, properties_dict)
+    price_stats = create_price_propensity_features(
+        events, client_ids, END_TIME, properties_dict
+    )
+    
+    # # Statistical features: category propensity
+    # logger.info("Calculating category propensity features")
+    # category_targets = load_propensity_targets(
+    #     target_dir, PropensityTasks.PROPENSITY_CATEGORY
+    # )
+    # category_stats = create_category_propensity_features(
+    #     events, client_ids, END_TIME, properties_dict, category_targets
+    # )
 
-    dfs = [client_ids] + user_first_last + [time_diff_stats] + events_window_count + price_stats
+    logger.info("Combining all features into a single DataFrame")
+    dfs = (
+        [client_ids] + user_first_last + [time_diff_stats] + 
+        events_window_count + price_stats
+    )
+    logger.info(f"Number of feature DataFrames: {len(dfs)}")
     features = reduce(lambda left, right: left.merge(right, on="client_id", how="left"), dfs)
 
     return features
@@ -100,6 +122,86 @@ def load_properties_dict(data_dir: DataDir) -> Dict[str, Dict[str, int]]:
         .to_dict(orient='index')
     )
     return properties_dict
+
+
+def load_propensity_targets(
+    target_dir: DataDir, 
+    task: PropensityTasks
+) -> np.ndarray:
+    propensity_targets = np.load(
+        target_dir.target_dir / f"{task.value}.npy",
+        allow_pickle=True,
+    )
+    return propensity_targets
+
+
+def create_category_propensity_features(
+    events: Dict[str, pd.DataFrame],
+    client_ids: pd.DataFrame,
+    end_time: pd.Timestamp,
+    properties_dict: Dict[str, Dict[str, int]],
+    category_targets: np.ndarray,
+) -> List:
+    category_stats = []
+
+    for event_type in ["product_buy", "add_to_cart"]:
+        df = events[event_type].copy()
+        df["category"] = df["sku"].map(lambda sku: properties_dict[sku]["category"])
+        target_df = df[df["category"].isin(category_targets)]
+        
+        # 1. Category Statistics
+        for time_window in ["all"]:
+            if time_window == "30d":
+                target_window_df = target_df[target_df["timestamp"] >= (end_time - pd.Timedelta(days=30))]
+            else:
+                target_window_df = target_df
+            
+            category_counts = target_window_df.groupby(
+                ["client_id", "category"]
+            ).size().unstack(fill_value=0)
+            
+            for cat_id in category_targets:
+                if cat_id not in category_counts.columns:
+                    category_counts[cat_id] = 0
+            
+            category_counts.columns = [
+                f"{event_type}_category_count_{col}_{time_window}" for col in category_counts.columns
+            ]
+            category_counts = category_counts.reset_index()
+            category_counts = client_ids.merge(category_counts, on="client_id", how="left").fillna(0)
+            category_stats.append(category_counts)
+        
+        # 2. Category Diversity
+        category_distribution = (
+            target_df.groupby(["client_id", "category"]).size()
+            .groupby("client_id")
+            .apply(lambda x: entropy(x / x.sum(), base=2) if x.sum() > 0 else 0)
+            .reset_index(name=f"{event_type}_category_entropy")
+        )
+        
+        unique_categories = (
+            target_df.groupby("client_id")["category"].nunique().
+            reset_index(name=f"{event_type}_unique_categories")
+        )
+        
+        diversity_df = pd.merge(category_distribution, unique_categories, on="client_id", how="outer").fillna(0)
+        diversity_df = client_ids.merge(diversity_df, on="client_id", how="left").fillna(0)
+        category_stats.append(diversity_df)
+
+        # 3. Target Category Proportion
+        target_counts = target_df.groupby("client_id").size().reset_index(name="target_count")
+        total_counts = df.groupby("client_id").size().reset_index(name="total_count")
+        
+        proportion_df = pd.merge(target_counts, total_counts, on="client_id", how="right").fillna(0)
+        proportion_df[f"{event_type}_target_category_proportion"] = (
+            proportion_df["target_count"] / proportion_df["total_count"]
+        ).fillna(0)
+        
+        proportion_df = proportion_df[["client_id", f"{event_type}_target_category_proportion"]]
+        proportion_df = client_ids.merge(proportion_df, on="client_id", how="left").fillna(0)
+        category_stats.append(proportion_df)
+        
+    return category_stats
 
 
 def create_price_propensity_features(
@@ -146,12 +248,17 @@ def create_price_propensity_features(
         price_stats.append(price_stats_df)
         
         # 3. Price Diversity
-        tier_distribution = df.groupby(["client_id", "price_tier"]).size().groupby("client_id").apply(
-            lambda x: entropy(x / x.sum(), base=2) if x.sum() > 0 else 0
-        ).reset_index(name=f"{event_type}_price_entropy")
-        unique_tiers = df.groupby(
-            "client_id"
-        )["price_tier"].nunique().reset_index(name=f"{event_type}_unique_price_tiers")
+        tier_distribution = ( 
+            df.groupby(["client_id", "price_tier"]).size()
+            .groupby("client_id")
+            .apply(lambda x: entropy(x / x.sum(), base=2) if x.sum() > 0 else 0)
+            .reset_index(name=f"{event_type}_price_entropy")
+        )
+        unique_tiers = (
+            df.groupby("client_id")["price_tier"].nunique()
+            .reset_index(name=f"{event_type}_unique_price_tiers")
+        )
+        
         diversity_df = pd.merge(tier_distribution, unique_tiers, on="client_id", how="outer").fillna(0)
         diversity_df = client_ids.merge(diversity_df, on="client_id", how="left").fillna(0)
         price_stats.append(diversity_df)
@@ -175,6 +282,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="Directory with input and target data – produced by data_utils.split_data",
     )
     parser.add_argument(
+        "--target-dir",
+        type=str,
+        required=True,
+        help="Directory where to store target data (e.g., propensity_category)",
+    )
+    parser.add_argument(
         "--features-dir",
         type=str,
         required=True,
@@ -192,10 +305,12 @@ def get_parser() -> argparse.ArgumentParser:
 
 def main(params):
     data_dir = DataDir(Path(params.data_dir))
+    target_dir = DataDir(Path(params.target_dir))
     features_dir = Path(params.features_dir)
 
     features = create_features(
         data_dir=data_dir,
+        target_dir=target_dir,
         num_days=params.num_days,
     )
     save_features(

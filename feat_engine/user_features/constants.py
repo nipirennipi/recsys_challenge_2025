@@ -20,3 +20,8 @@ EVENT_TYPE_TO_COLUMNS: Dict[EventTypes, List[str]] = {
     EventTypes.PAGE_VISIT: "url",
     EventTypes.SEARCH_QUERY: "query",
 }
+
+
+class PropensityTasks(str, Enum):
+    PROPENSITY_CATEGORY = "propensity_category"
+    PROPENSITY_SKU = "propensity_sku"

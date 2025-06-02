@@ -12,15 +12,18 @@ from multi_task.metrics_containers import (
 )
 from multi_task.constants import (
     QUERY_EMBEDDING_DIM,
-    SKU_EMBEDDING_DIM,
-    CATEGORY_EMBEDDING_DIM,
+    SKU_ID_EMBEDDING_DIM,
+    SKU_CATEGORY_EMBEDDING_DIM,
     EVENT_TYPE_EMBEDDING_DIM,
     URL_EMBEDDING_DIM,
     NAME_EMBEDDING_DIM,
-    LSTM_HIDDEN_SIZE,
-    LSTM_NUM_LAYERS,
-    LSTM_DROPOUT,
-    LSTM_BIDIRECTIONAL,
+    # LSTM_HIDDEN_SIZE,
+    # LSTM_NUM_LAYERS,
+    # LSTM_DROPOUT,
+    # LSTM_BIDIRECTIONAL,
+    SKU_EMBEDDING_DIM,
+    SASREC_NUM_HEADS,
+    SASREC_NUM_LAYERS,
     NUM_CROSS_LAYERS,
     DEEP_HIDDEN_DIMS,
     EMBEDDING_DIM,
@@ -28,6 +31,7 @@ from multi_task.constants import (
     CONTRASTIVE_LAMBDA,
     MLP_PROJECTION_DIM,
     TIME_FEAT_DIM,
+    MAX_SEQUENCE_LENGTH,
 )
 from multi_task.utils import (
     record_embeddings,
@@ -92,12 +96,12 @@ class SKUEmbeddingLayer(nn.Module):
         super().__init__()
         self.sku_embedding = nn.Embedding(
             num_embeddings=sku_vocab_size + 1, 
-            embedding_dim=SKU_EMBEDDING_DIM, 
+            embedding_dim=SKU_ID_EMBEDDING_DIM, 
             padding_idx=0
         )
         self.category_embedding = nn.Embedding(
             num_embeddings=category_vocab_size + 1, 
-            embedding_dim=CATEGORY_EMBEDDING_DIM, 
+            embedding_dim=SKU_CATEGORY_EMBEDDING_DIM, 
             padding_idx=0
         )
         self.event_type_embedding = nn.Embedding(
@@ -210,6 +214,125 @@ class DCNV2(nn.Module):
         return output
 
 
+class SASRec(nn.Module):
+    """
+    Self-Attentive Sequential Recommendation (SASRec).
+    This model uses self-attention to model user-item interactions in sequences.
+
+    Args:
+        hidden_dim (int): Dimensionality of the embeddings.
+        num_heads (int): Number of attention heads.
+        num_layers (int): Number of transformer layers.
+        max_seq_len (int): Maximum sequence length.
+        dropout (float): Dropout rate.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int,
+        num_layers: int,
+        max_seq_len: int,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.position_embedding = nn.Embedding(
+            num_embeddings=max_seq_len, embedding_dim=hidden_dim
+        )
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=hidden_dim,
+                nhead=num_heads,
+                dim_feedforward=hidden_dim * 4,
+                dropout=dropout,
+                activation="relu",
+            ),
+            num_layers=num_layers,
+        )
+        self.layer_norm = nn.LayerNorm(hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, seq_emb: Tensor, seq_len: Tensor) -> Tensor:
+        """
+        Forward pass for SASRec.
+
+        Args:
+            seq_emb (Tensor): Input tensor of item indices (batch_size, max_seq_len, emb_dim).
+            seq_len (Tensor): Lengths of each sequence in the batch (batch_size).
+
+        Returns:
+            Tensor: Last hidden state (batch_size, emb_dim).
+        """
+        batch_size, max_seq_len, _ = seq_emb.size()
+        positions = (
+            torch.arange(max_seq_len, device=seq_emb.device)
+            .unsqueeze(0)
+            .expand(batch_size, -1)    
+        )
+        
+        # Generate embeddings
+        pos_emb = self.position_embedding(positions)
+        x = self.layer_norm(seq_emb + pos_emb)
+        x = self.dropout(x)
+
+        # Create attention mask
+        attn_mask = (
+            torch.triu(
+                torch.ones(max_seq_len, max_seq_len, device=seq_emb.device), 
+                diagonal=1,
+            ).bool()
+        ) 
+        
+        # Create key padding mask
+        src_key_padding_mask = positions >= seq_len.unsqueeze(1)
+        
+        # Pass through transformer
+        x = self.transformer(
+            x.permute(1, 0, 2), 
+            src_key_padding_mask=src_key_padding_mask, 
+            mask=attn_mask
+        )
+        x = x.permute(1, 0, 2)
+
+        # Gather the last relevant hidden state for each sequence
+        last_hidden_state = x[torch.arange(batch_size), seq_len - 1]
+
+        return last_hidden_state
+
+
+class AveragePooling(nn.Module):
+    """
+    Average Pooling Layer.
+    This layer computes the average of embeddings over the sequence length.
+
+    Args:
+        None
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, seq_emb: Tensor, seq_len: Tensor) -> Tensor:
+        """
+        Forward pass for average pooling.
+
+        Args:
+            seq_emb (Tensor): Input tensor of shape (batch_size, max_seq_len, emb_dim).
+            seq_len (Tensor): Lengths of each sequence in the batch (batch_size).
+
+        Returns:
+            Tensor: Pooled embeddings of shape (batch_size, emb_dim).
+        """
+        # Mask out padding positions
+        mask = torch.arange(seq_emb.size(1), device=seq_emb.device).unsqueeze(0) < seq_len.unsqueeze(1)
+        mask = mask.unsqueeze(-1).expand_as(seq_emb)  # Expand mask to match seq_emb shape
+        masked_seq_emb = seq_emb * mask
+
+        # Compute sum of embeddings and divide by sequence length
+        pooled_emb = masked_seq_emb.sum(dim=1) / seq_len.unsqueeze(-1)
+        return pooled_emb
+
+
 class SequenceModeling(nn.Module):
     """
     Sequence modeling using LSTM. This class defines an LSTM-based sequence model
@@ -233,24 +356,21 @@ class SequenceModeling(nn.Module):
         self.url_embedding_layer = URLEmbeddingLayer(
             url_vocab_size=url_vocab_size,
         )
-        input_size = (
-            SKU_EMBEDDING_DIM 
-            + CATEGORY_EMBEDDING_DIM 
-            + EVENT_TYPE_EMBEDDING_DIM 
-            + NAME_EMBEDDING_DIM
-            + TIME_FEAT_DIM
-            + item_stat_feat_dim
-            + 1
+        self.sku_seq_encoder = SASRec(
+            hidden_dim=SKU_EMBEDDING_DIM,
+            num_heads=SASREC_NUM_HEADS,
+            num_layers=SASREC_NUM_LAYERS,
+            max_seq_len=MAX_SEQUENCE_LENGTH,
+            dropout=0.1,
         )
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=LSTM_HIDDEN_SIZE,
-            batch_first=True,
-            num_layers=LSTM_NUM_LAYERS,
-            dropout=LSTM_DROPOUT,
-            bidirectional=LSTM_BIDIRECTIONAL,
+        self.url_seq_encoder = SASRec(
+            hidden_dim=URL_EMBEDDING_DIM,
+            num_heads=SASREC_NUM_HEADS,
+            num_layers=SASREC_NUM_LAYERS,
+            max_seq_len=MAX_SEQUENCE_LENGTH,
+            dropout=0.1,
         )
-        self.lstm_norm = nn.LayerNorm(LSTM_HIDDEN_SIZE)
+        self.query_seq_encoder = AveragePooling()
         self.dcnv2 = DCNV2(
             input_dim=EMBEDDING_DIM,
         )
@@ -286,70 +406,35 @@ class SequenceModeling(nn.Module):
             user_features,
         ) = x
         # Generate embeddings for the input sequences
-        embeddings = self.sku_embedding_layer(sequence_sku, sequence_category, sequence_event_type)
+        sku_embedding = self.sku_embedding_layer(sequence_sku, sequence_category, sequence_event_type)
         price_embedding = sequence_price.unsqueeze(-1)
         name_embedding = sequence_name
         stat_feat_embedding = sequence_stat_feat
         time_feat_embedding = sequence_time_feat
-        embeddings = torch.cat(
-            [embeddings, price_embedding, name_embedding, stat_feat_embedding, time_feat_embedding], 
+        sku_embedding = torch.cat(
+            [sku_embedding, price_embedding, name_embedding, stat_feat_embedding, time_feat_embedding], 
             dim=-1
         )
 
-        # Pass through LSTM
-        packed_input = nn.utils.rnn.pack_padded_sequence(
-            embeddings, sequence_sku_length.cpu(), batch_first=True, enforce_sorted=False
-        )
-        packed_output, _ = self.lstm(packed_input)
-        lstm_output, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+        # Pass through SASRec, respectively for sku, url, and query
+        sku_seq_output = self.sku_seq_encoder(sku_embedding, sequence_sku_length)
         
-        # Average pooling hidden state
-        mask = (torch.arange(lstm_output.size(1), device=sequence_sku_length.device)
-            < sequence_sku_length.unsqueeze(1))
-        lstm_output = (lstm_output * mask.unsqueeze(-1)).sum(dim=1) / sequence_sku_length.unsqueeze(-1)
-        lstm_output = self.lstm_norm(lstm_output)
-        
-        # Log if lstm_output contains values greater than 10000 or less than -10000
-        if torch.any(lstm_output > 10) or torch.any(lstm_output < -10):
-            logger.info(
-                "lstm_output out of range: max=%s, min=%s", 
-                torch.max(lstm_output).item(), 
-                torch.min(lstm_output).item()
-            )
-        
-        
-        # Get the last hidden state
-        # lstm_output = lstm_output[torch.arange(lstm_output.size(0)), sequence_length - 1]
-        
-        # Average pooling for url_embedding (query_embedding) based on sequence_url_length (sequence_query_length)
         url_embedding = self.url_embedding_layer(sequence_url)
+        url_seq_output = self.url_seq_encoder(url_embedding, sequence_url_length)
+        
         query_embedding = sequence_query
-        url_mask = (torch.arange(url_embedding.size(1), device=sequence_url_length.device)
-                < sequence_url_length.unsqueeze(1))
-        url_embedding = (url_embedding * url_mask.unsqueeze(-1)).sum(dim=1) / sequence_url_length.unsqueeze(-1)
-        query_mask = (torch.arange(query_embedding.size(1), device=sequence_query_length.device)
-                  < sequence_query_length.unsqueeze(1))
-        query_embedding = (query_embedding * query_mask.unsqueeze(-1)).sum(dim=1) / sequence_query_length.unsqueeze(-1)
+        query_seq_output = self.query_seq_encoder(query_embedding, sequence_query_length)
 
-
-        # Log if url_embedding contains values greater than 10000 or less than -10000
-        if torch.any(url_embedding > 10) or torch.any(url_embedding < -10):
-            logger.info(
-                "url_embedding out of range: max=%s, min=%s", 
-                torch.max(url_embedding).item(), 
-                torch.min(url_embedding).item()
-            )
-
-        # Log if query_embedding contains values greater than 10000 or less than -10000
-        if torch.any(query_embedding > 10) or torch.any(query_embedding < -10):
-            logger.info(
-                "query_embedding out of range: max=%s, min=%s", 
-                torch.max(query_embedding).item(), 
-                torch.min(query_embedding).item()
-            )
-
-        # Concatenate lstm_output, url_embedding, and query_embedding
-        combined_feat = torch.cat([user_features, lstm_output, url_embedding, query_embedding], dim=-1)
+        # Concatenate user_features, sku_seq_output, url_seq_output, and query_seq_output
+        combined_feat = torch.cat(
+            [
+                user_features, 
+                sku_seq_output, 
+                url_seq_output, 
+                query_seq_output
+            ], 
+            dim=-1
+        )
         # Log if combined_feat contains values greater than 10000 or less than -10000
         # if torch.any(combined_feat > 100) or torch.any(combined_feat < -100):
         #     logger.info(
