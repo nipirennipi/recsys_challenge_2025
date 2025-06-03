@@ -25,9 +25,15 @@ EVENT_TYPE_TO_COLUMNS: Dict[EventTypes, List[str]] = {
 
 ENTITY_COLUMN_NAME = "entity"
 
+# Gpu memory to allocate
+GPU_MEMORY_TO_ALLOCATE = 10  # GB
+
+# Frequency cutoff
+URL_FREQUENCY_CUTOFF = 20   # 94.6% URLs appear less than 20 times
+
 # In competition settings these hyperparameters are fixed
-BATCH_SIZE = 128 * 16
-GROUP_SIZE = 100
+BATCH_SIZE = 128 * 4
+GROUP_SIZE = 100    # DO NOT CHANGE THIS VALUE
 HIDDEN_SIZE_THIN = 2048
 HIDDEN_SIZE_WIDE = 4096
 LEARNING_RATE = 0.001

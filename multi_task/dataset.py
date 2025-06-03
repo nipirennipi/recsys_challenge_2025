@@ -79,11 +79,11 @@ class BehavioralDataset(Dataset):
         
         save_dir = self.data_dir._target_dir
         if self.mode == "train":
-            self.ids_file = save_dir / "train_ids.txt"
-            self.sequence_file = save_dir / "train_sequence.parquet"
+            self.ids_file = save_dir / f"train_ids_{BATCH_SIZE}.txt"
+            self.sequence_file = save_dir / f"train_sequence_{BATCH_SIZE}.parquet"
         else:
-            self.ids_file = save_dir / "relevant_ids.txt"
-            self.sequence_file = save_dir / "relevant_sequence.parquet"
+            self.ids_file = save_dir / f"relevant_ids_{BATCH_SIZE}.txt"
+            self.sequence_file = save_dir / f"relevant_sequence_{BATCH_SIZE}.parquet"
 
         self.chunk_idx: int = -1
         self.chunk_size: int = BATCH_SIZE * GROUP_SIZE
@@ -91,12 +91,6 @@ class BehavioralDataset(Dataset):
         self.client_ids: Set[int] = set()
         self._behavior_sequence()
         self._load_user_features_dict()
-        
-        # Release memory
-        self.properties_dict.clear()
-        logger.info("Released memory for properties_dict")
-        self.item_stat_feat_dict.clear()
-        logger.info("Released memory for item_stat_feat_dict")
 
     def _load_user_features_dict(self) -> None:
         """

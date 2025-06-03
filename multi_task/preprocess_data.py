@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Dict
+from typing import Dict, Set
 from pathlib import Path
 import argparse
 import logging
@@ -11,12 +11,19 @@ from multi_task.constants import (
     PAD_VALUE_SKU,
     PAD_VALUE_CATEGORY,
     PAD_VALUE_URL,
+    URL_FREQUENCY_CUTOFF,
 )
 import json
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
+
+
+def load_events(challenge_data_dir: DataDir, event_type: EventTypes) -> pd.DataFrame:
+    return pd.read_parquet(
+        challenge_data_dir.data_dir / f"{event_type.value}.parquet"
+    )
 
 
 class IdMapper:
@@ -34,10 +41,19 @@ class IdMapper:
         self.category_id_map: Dict[int, int] = {}
         self.url_id_map: Dict[int, int] = {}
     
-    def load_events(self, event_type: EventTypes) -> pd.DataFrame:
-        return pd.read_parquet(
-            self.challenge_data_dir.data_dir / f"{event_type.value}.parquet"
-        )
+    def cutoff_infrequent_url(self, infrequent_urls: Set[int]) -> None:
+        """
+        Cuts off infrequent URLs from the URL ID mapping.
+        Args:
+            infrequent_urls (Set[int]): Set of infrequent URLs to be removed.
+        """
+        logger.info("Cutting off infrequent URLs from URL ID mapping...")
+        self.url_id_map = {
+            url: id_ for url, id_ in self.url_id_map.items() if url not in infrequent_urls
+        }
+        self.url_id_map = {url: i + 1 for i, url in enumerate(self.url_id_map.keys())}
+        
+        logger.info(f"Remaining {len(self.url_id_map)} URLs after cutoff.")
     
     def _map_client_ids(self) -> None:
         """
@@ -48,7 +64,7 @@ class IdMapper:
         for event_type in EventTypes:
             msg = f"Loading client ids in {event_type.value} event type"
             logger.info(msg=msg)
-            events = self.load_events(event_type=event_type)
+            events = load_events(self.challenge_data_dir, event_type=event_type)
             all_client_ids.update(events["client_id"].unique())
         
         self.client_id_map = {
@@ -83,18 +99,18 @@ class IdMapper:
         """
         Maps URL ids across all event types to a new range of ids starting from 1.
         """
-        events = self.load_events(event_type=EventTypes.PAGE_VISIT)
+        events = load_events(self.challenge_data_dir, event_type=EventTypes.PAGE_VISIT)
         self.url_id_map = {
             url: i + 1 for i, url in enumerate(events['url'].unique())
         }
         
         logger.info("URL ID mapping completed.")
     
-    def get_client_id(self, client_id: int) -> int:
-        """
-        Returns the mapped client id.
-        """
-        return self.client_id_map[client_id]
+    # def get_client_id(self, client_id: int) -> int:
+    #     """
+    #     Returns the mapped client id.
+    #     """
+    #     return self.client_id_map[client_id]
     
     def get_sku_id(self, sku: int) -> int:
         """
@@ -118,13 +134,13 @@ class IdMapper:
         """
         if url == PAD_VALUE_URL:
             return PAD_VALUE_URL
-        return self.url_id_map[url]
+        return self.url_id_map.get(url, PAD_VALUE_URL)
     
-    def client_vocab_size(self) -> int:
-        """
-        Returns the size of the client id mapping.
-        """
-        return len(self.client_id_map)
+    # def client_vocab_size(self) -> int:
+    #     """
+    #     Returns the size of the client id mapping.
+    #     """
+    #     return len(self.client_id_map)
     
     def sku_vocab_size(self) -> int:
         """
@@ -180,26 +196,65 @@ class IdMapper:
         with open(mapping_file, "r") as f:
             mapping_data = json.load(f)
         
-        self.client_id_map = {int(k): int(v) for k, v in mapping_data["client_id_map"].items()}
+        # self.client_id_map = {int(k): int(v) for k, v in mapping_data["client_id_map"].items()}
         self.sku_id_map = {int(k): int(v) for k, v in mapping_data["sku_id_map"].items()}
         self.category_id_map = {int(k): int(v) for k, v in mapping_data["category_id_map"].items()}
         self.url_id_map = {int(k): int(v) for k, v in mapping_data["url_id_map"].items()}
         
         logger.info("Loaded all ID mappings from id_mapping.json")
         logger.info(
-            f"Loaded {len(self.client_id_map)} client ids, "
-            f"{len(self.sku_id_map)} sku ids, and "
-            f"{len(self.category_id_map)} category ids."
+            # f"Loaded {len(self.client_id_map)} client ids, "
+            f"Loaded {len(self.sku_id_map)} sku ids, "
+            f"{len(self.category_id_map)} category ids, and"
             f"{len(self.url_id_map)} url ids."
         )
+
+
+class InfrequentUrlRecorder:
+    def __init__(self, challenge_data_dir: DataDir):
+        self.challenge_data_dir = challenge_data_dir
+        self.infrequent_url: Set[int] = set()
+
+    def record_infrequent_url(self, frequency_cutoff: int) -> None:
+        """
+        Records URLs that appear less than {frequency_cutoff} times across page_visit event types.
+        These URLs are considered infrequent and will be saved to a file.
+        """
+        logger.info("Recording infrequent URLs...")
+        events = load_events(self.challenge_data_dir, event_type=EventTypes.PAGE_VISIT)
+        url_counts = events['url'].value_counts()
+        infrequent_urls = url_counts[url_counts < frequency_cutoff].index.tolist()
+        
+        infrequent_urls_file = self.challenge_data_dir.data_dir / "infrequent_urls.txt"
+        with open(infrequent_urls_file, "w") as f:
+            for url in infrequent_urls:
+                f.write(f"{url}\n")
+        
+        url_infrequent_ratio = len(infrequent_urls) / len(url_counts)
+        logger.info(f"{url_infrequent_ratio * 100:.2f}% URLs appear less than {frequency_cutoff} times")
+    
+    def load_infrequent_url(self) -> None:
+        """
+        Loads the infrequent URLs from the file.
+        """
+        infrequent_urls_file = self.challenge_data_dir.data_dir / "infrequent_urls.txt"
+        if not infrequent_urls_file.exists():
+            logger.warning("Infrequent URLs file does not exist.")
+            return []
+        
+        with open(infrequent_urls_file, "r") as f:
+            for line in f:
+                self.infrequent_url.add(int(line.strip()))
+        
+        logger.info(f"Loaded {len(self.infrequent_url)} infrequent URLs.")
 
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--challenge-data-dir",
+        default="/data/lyjiang/RecSys_Challenge_2025",
         type=str,
-        required=True,
         help="Competition data directory which should consists of event files, product properties and two subdirectories — input and target",
     )
     return parser
@@ -216,6 +271,10 @@ def main():
     id_mapper.id_mapping()
     id_mapper.save_mapping()
 
+    # Recording infrequent entities
+    infrequent_url_recorder = InfrequentUrlRecorder(challenge_data_dir=challenge_data_dir)
+    infrequent_url_recorder.record_infrequent_url(frequency_cutoff=URL_FREQUENCY_CUTOFF)
+    
 
 if __name__ == "__main__":
     main()

@@ -22,6 +22,7 @@ from multi_task.data_module import (
     BehavioralDataModule,
 )
 from multi_task.constants import (
+    GPU_MEMORY_TO_ALLOCATE,
     BATCH_SIZE,
     MAX_EMBEDDING_DIM,
     EMBEDDING_DIM,
@@ -43,6 +44,7 @@ from multi_task.metric_aggregator import (
 )
 from multi_task.preprocess_data import (
     IdMapper,
+    InfrequentUrlRecorder,
 )
 from data_utils.constants import (
     EventTypes,
@@ -82,7 +84,7 @@ def run_training(
         neptune_logger (NeptuneLogger): logger instance where training information is logged
     """
     
-    gpu_allocator = GPUAllocator(22, devices)
+    gpu_allocator = GPUAllocator(GPU_MEMORY_TO_ALLOCATE, devices)
     gpu_allocator.allocate_gpu_memory()
 
     task_settings = [
@@ -176,6 +178,13 @@ def run_tasks(
 
     id_mapper = IdMapper(challenge_data_dir=data_dir)
     id_mapper.load_mapping()
+    
+    # Cutoff infrequent URLs
+    infrequent_url_recorder = InfrequentUrlRecorder(challenge_data_dir=data_dir)
+    infrequent_url_recorder.load_infrequent_url()
+    id_mapper.cutoff_infrequent_url(
+        infrequent_urls=infrequent_url_recorder.infrequent_url
+    )
     
     logger.info("Setting up training logger")
     neptune_logger = neptune_logger_factory.get_logger()

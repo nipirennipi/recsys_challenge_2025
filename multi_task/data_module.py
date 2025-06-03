@@ -95,6 +95,11 @@ class BehavioralDataModule(pl.LightningDataModule):
                 mode="validation",
             )
             
+            # Release memory
+            self.properties_dict.clear()
+            logger.info("Released memory for properties_dict")
+            self.item_features_dict.clear()
+            logger.info("Released memory for item_features_dim")
             self.gpu_allocator.release_gpu_memory()
 
     def _load_properties_dict(self) -> None:

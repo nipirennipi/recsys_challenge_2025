@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -6,6 +7,10 @@ from training_pipeline.tasks import ValidTasks
 from training_pipeline.metrics_containers import (
     MetricContainer,
 )
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(level=logging.INFO)
 
 
 class MetricsAggregator:
@@ -58,3 +63,5 @@ class MetricsAggregator:
             json.dump(self._best_weighted_metrics, scores_file)
         with open(epochs_fn, "w") as epochs_file:
             json.dump(self._best_epochs, epochs_file)
+        
+        logger.info(f"Best weighted metrics: {self._best_weighted_metrics}")
