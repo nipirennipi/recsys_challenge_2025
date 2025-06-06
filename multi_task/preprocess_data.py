@@ -134,7 +134,7 @@ class IdMapper:
         """
         if url == PAD_VALUE_URL:
             return PAD_VALUE_URL
-        return self.url_id_map.get(url, PAD_VALUE_URL)
+        return self.url_id_map.get(url, self.url_vocab_size())
     
     # def client_vocab_size(self) -> int:
     #     """
@@ -158,7 +158,7 @@ class IdMapper:
         """
         Returns the size of the url id mapping.
         """
-        return len(self.url_id_map)
+        return len(self.url_id_map) + 1
     
     def id_mapping(self) -> None:
         """
@@ -205,7 +205,7 @@ class IdMapper:
         logger.info(
             # f"Loaded {len(self.client_id_map)} client ids, "
             f"Loaded {len(self.sku_id_map)} sku ids, "
-            f"{len(self.category_id_map)} category ids, and"
+            f"{len(self.category_id_map)} category ids, and "
             f"{len(self.url_id_map)} url ids."
         )
 

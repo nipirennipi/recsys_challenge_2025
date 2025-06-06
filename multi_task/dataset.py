@@ -6,6 +6,7 @@ import pickle
 from typing import Dict, Tuple, List, Set
 from torch.utils.data import Dataset
 from datetime import datetime
+from sklearn.preprocessing import MinMaxScaler
 
 from data_utils.data_dir import DataDir
 from tqdm import tqdm
@@ -25,8 +26,13 @@ from multi_task.constants import (
     PAD_VALUE_NAME,
     PAD_VALUE_EVENT_TYPE,
     PAD_VALUE_TIME_FEAT,
+    PAD_VALUE_TARGET_FEAT,
     PAD_VALUE_URL,
     PAD_VALUE_QUERY,
+    PAD_VALUE_TIMESTAMP,
+    PAD_SKU,
+    PAD_URL,
+    PAD_QUERY,
     MAX_SEQUENCE_LENGTH,
     QUERY_MIN_VALUE,
     QUERY_MAX_VALUE,
@@ -36,10 +42,24 @@ from multi_task.constants import (
 from multi_task.utils import (
     parse_to_array,
 )
+from multi_task.tasks import (
+    PropensityTasks,
+)
 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.INFO)
+
+
+def load_propensity_targets(
+    data_dir: DataDir, 
+    task: PropensityTasks
+) -> np.ndarray:
+    propensity_targets = np.load(
+        data_dir.target_dir / f"{task.value}.npy",
+        allow_pickle=True,
+    )
+    return propensity_targets
 
 
 class BehavioralDataset(Dataset):
@@ -91,6 +111,13 @@ class BehavioralDataset(Dataset):
         self.client_ids: Set[int] = set()
         self._behavior_sequence()
         self._load_user_features_dict()
+        
+        # self.category_targets = load_propensity_targets(
+        #     self.data_dir, PropensityTasks.PROPENSITY_CATEGORY
+        # )
+        # self.sku_targets = load_propensity_targets(
+        #     self.data_dir, PropensityTasks.PROPENSITY_SKU
+        # )
 
     def _load_user_features_dict(self) -> None:
         """
@@ -103,6 +130,7 @@ class BehavioralDataset(Dataset):
             user_features = pd.read_parquet(self.data_dir.data_dir / "user_features.parquet")
             
         # Normalize user features
+        min_max_scaler = MinMaxScaler()
         for col in user_features.columns:
             # Apply normalization for columns
             if any(key in col for key in ["_days_since_", "_time_diff_"]):
@@ -111,20 +139,17 @@ class BehavioralDataset(Dataset):
             
             # Apply np.log1p and min-max scaling to columns
             elif any(key in col for key in [
-                "_count_", "_price_tier_", "_unique_price_tiers", "_unique_categories"
+                "_count_", "_price_tier_", "_unique_price_tiers", "_unique_categories",
+                "_target_sku_count_", "_unique_target_sku",
             ]):
                 user_features[col] = np.log1p(user_features[col], dtype=np.float32)
-                min_value = user_features[col].min()
-                max_value = user_features[col].max()
-                user_features[col] = (user_features[col] - min_value) / (max_value - min_value)
+                user_features[col] = min_max_scaler.fit_transform(user_features[[col]].values)
             
             # Apply min-max scaling and fillna with -1 for columns
             elif any(key in col for key in [
                 "_price_mean", "_price_median", "_price_std", "_price_max", "_price_min"
             ]):
-                min_value = user_features[col].min()
-                max_value = user_features[col].max()
-                user_features[col] = (user_features[col] - min_value) / (max_value - min_value)
+                user_features[col] = min_max_scaler.fit_transform(user_features[[col]].values)
                 user_features[col] = user_features[col].fillna(-1).astype(np.float32)  
         
         # Defragmentation
@@ -321,24 +346,26 @@ class BehavioralDataset(Dataset):
             num_mask = max(1, int(len(sequence) * 0.3))
             mask_indices = np.random.choice(len(sequence), num_mask, replace=False)
             for idx in mask_indices:
-                sequence[idx] = pad_value
+                timestamp = sequence[idx]["timestamp"]  # Preserve timestamp
+                sequence[idx] = pad_value.copy()
+                sequence[idx]['timestamp'] = timestamp 
         else:  # Cropping
             crop_len = max(1, int(len(sequence) * 0.6))
             start_idx = np.random.randint(0, len(sequence) - crop_len + 1)
             sequence = sequence[start_idx:start_idx + crop_len]
 
-        return sequence[:max_length]
+        return sequence[-max_length:]
 
-    def _generate_timestamp_features(self, sequence_sku_info: List[dict]) -> None:
-        total_events = len(sequence_sku_info)
+    def _generate_timestamp_features(self, sequence_entity_info: List[dict]) -> None:
+        total_events = len(sequence_entity_info)
         if total_events == 0:
             return
         
-        for idx, item in enumerate(sequence_sku_info):
+        for idx, item in enumerate(sequence_entity_info):
             timestamp = item["timestamp"]
-            if timestamp is None:
-                logger.info(f"sequence_sku_info: {sequence_sku_info}")
-                continue
+            # if timestamp is None:
+            #     logger.info(f"sequence_entity_info: {sequence_entity_info}")
+            #     continue
             hour_of_day = timestamp.hour  # Hour of the day (0-23)
             hour_sin = np.sin(2 * np.pi * hour_of_day / 24.)
             hour_cos = np.cos(2 * np.pi * hour_of_day / 24.)
@@ -351,7 +378,16 @@ class BehavioralDataset(Dataset):
             # event_position = (idx + 1) / total_events  # Position in the sequence (0-1)
             
             time_feat = [hour_sin, hour_cos, day_sin, day_cos, is_weekend]
-            sequence_sku_info[idx]["time_feat"] = np.array(time_feat, dtype=np.float32)
+            sequence_entity_info[idx]["time_feat"] = np.array(time_feat, dtype=np.float32)
+
+    def _generate_target_features(self, sequence_sku_info: List[dict]) -> None:
+        for idx, item in enumerate(sequence_sku_info):
+            sku = item["sku"]
+            category = item["category"]
+            is_category_target = int(category in self.category_targets)
+            is_sku_target = int(sku in self.sku_targets)
+            target_feat = [is_category_target, is_sku_target]
+            sequence_sku_info[idx]["target_feat"] = np.array(target_feat, dtype=np.float32)
 
     def __len__(self) -> int:
         return len(self.client_ids)
@@ -386,149 +422,167 @@ class BehavioralDataset(Dataset):
 
         # Generate timestamp-related features for sequence_sku_info
         self._generate_timestamp_features(sequence_sku_info)
+        self._generate_timestamp_features(sequence_url_info)
+        self._generate_timestamp_features(sequence_query_info)
+
+        # # Generate target-related features for sequence_sku_info
+        # self._generate_target_features(sequence_sku_info)
 
         if is_augmentation:
-            pad_sku = {"sku": PAD_VALUE_SKU, "category": PAD_VALUE_CATEGORY, "price": PAD_VALUE_PRICE,
-                       "name": PAD_VALUE_NAME, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None, 
-                       "features": self.PAD_VALUE_STAT_FEAT, "time_feat": PAD_VALUE_TIME_FEAT}
-            pad_url = {"url": PAD_VALUE_URL, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None}
-            pad_query = {"query": PAD_VALUE_QUERY, "event_type": PAD_VALUE_EVENT_TYPE, "timestamp": None}
+            sequence_sku_info = self._augment_sequence(sequence_sku_info, PAD_SKU, MAX_SEQUENCE_LENGTH)
+            sequence_url_info = self._augment_sequence(sequence_url_info, PAD_URL, MAX_SEQUENCE_LENGTH)
+            sequence_query_info = self._augment_sequence(sequence_query_info, PAD_QUERY, MAX_SEQUENCE_LENGTH)
 
-            sequence_sku_info = self._augment_sequence(sequence_sku_info, pad_sku, MAX_SEQUENCE_LENGTH)
-            sequence_url_info = self._augment_sequence(sequence_url_info, pad_url, MAX_SEQUENCE_LENGTH)
-            sequence_query_info = self._augment_sequence(sequence_query_info, pad_query, MAX_SEQUENCE_LENGTH)
-
-        sequence_sku_length = max(min(len(sequence_sku_info), MAX_SEQUENCE_LENGTH), 1)
-        sequence_url_length = max(min(len(sequence_url_info), MAX_SEQUENCE_LENGTH), 1)
-        sequence_query_length = max(min(len(sequence_query_info), MAX_SEQUENCE_LENGTH), 1)
+        sequence_sku_length = min(len(sequence_sku_info), MAX_SEQUENCE_LENGTH)
+        sequence_url_length = min(len(sequence_url_info), MAX_SEQUENCE_LENGTH)
+        sequence_query_length = min(len(sequence_query_info), MAX_SEQUENCE_LENGTH)
 
         # Convert sequence_info to a structured format (e.g., numpy arrays)
-        sequence_sku = np.array([item["sku"] for item in sequence_sku_info], dtype=np.int64)
-        sequence_category = np.array([item["category"] for item in sequence_sku_info], dtype=np.int64)
-        sequence_price = np.array([item["price"] for item in sequence_sku_info], dtype=np.float32)
-        sequence_event_type = np.array([item["event_type"] for item in sequence_sku_info], dtype=np.int64)
-        sequence_url = np.array([item["url"] for item in sequence_url_info], dtype=np.int64)    
+        sequence_sku_id = np.array([item["sku"] for item in sequence_sku_info], dtype=np.int64)
+        sequence_sku_category = np.array([item["category"] for item in sequence_sku_info], dtype=np.int64)
+        sequence_sku_price = np.array([item["price"] for item in sequence_sku_info], dtype=np.int64)
+        sequence_sku_event_type = np.array([item["event_type"] for item in sequence_sku_info], dtype=np.int64)
+        sequence_sku_timestamp = np.array([item["timestamp"] for item in sequence_sku_info], dtype="datetime64[ns]")
+        
+        sequence_url_id = np.array([item["url"] for item in sequence_url_info], dtype=np.int64)    
+        sequence_url_event_type = np.array([item["event_type"] for item in sequence_url_info], dtype=np.int64)
+        sequence_url_timestamp = np.array([item["timestamp"] for item in sequence_url_info], dtype="datetime64[ns]")
+        
+        sequence_query_event_type = np.array([item["event_type"] for item in sequence_query_info], dtype=np.int64)
+        sequence_query_timestamp = np.array([item["timestamp"] for item in sequence_query_info], dtype="datetime64[ns]") 
         
         if len(sequence_sku_info) > 0:
-            sequence_name = np.stack(
+            sequence_sku_name = np.stack(
                 [item["name"] for item in sequence_sku_info],
                 axis=0,
                 dtype=np.float32,
             )
-            sequence_stat_feat = np.stack(
-                [item["features"] for item in sequence_sku_info],
-                axis=0,
-                dtype=np.float32,
-            )
-            sequence_time_feat = np.stack(
+            # sequence_stat_feat = np.stack(
+            #     [item["features"] for item in sequence_sku_info],
+            #     axis=0,
+            #     dtype=np.float32,
+            # )
+            sequence_sku_time_feat = np.stack(
                 [item["time_feat"] for item in sequence_sku_info],
                 axis=0,
                 dtype=np.float32,
             )
         else:
-            sequence_name = np.expand_dims(PAD_VALUE_NAME, axis=0)
-            sequence_stat_feat = np.expand_dims(self.PAD_VALUE_STAT_FEAT, axis=0)
-            sequence_time_feat = np.expand_dims(PAD_VALUE_TIME_FEAT, axis=0)
+            sequence_sku_name = np.expand_dims(PAD_VALUE_NAME, axis=0)
+            # sequence_stat_feat = np.expand_dims(self.PAD_VALUE_STAT_FEAT, axis=0)
+            sequence_sku_time_feat = np.expand_dims(PAD_VALUE_TIME_FEAT, axis=0)
         
-        if len(sequence_query_info) > 0:
-            sequence_query = np.stack(
-                [query["query"] for query in sequence_query_info],
+        if len(sequence_url_info) > 0:
+            sequence_url_time_feat = np.stack(
+                [item["time_feat"] for item in sequence_url_info],
                 axis=0,
                 dtype=np.float32,
             )
         else:
-            sequence_query = np.expand_dims(PAD_VALUE_QUERY, axis=0)
+            sequence_url_time_feat = np.expand_dims(PAD_VALUE_TIME_FEAT, axis=0)
+        
+        if len(sequence_query_info) > 0:
+            sequence_query_query = np.stack(
+                [query["query"] for query in sequence_query_info],
+                axis=0,
+                dtype=np.float32,
+            )
+            sequence_query_time_feat = np.stack(
+                [query["time_feat"] for query in sequence_query_info],
+                axis=0,
+                dtype=np.float32,
+            )
+        else:
+            sequence_query_query = np.expand_dims(PAD_VALUE_QUERY, axis=0)
+            sequence_query_time_feat = np.expand_dims(PAD_VALUE_TIME_FEAT, axis=0)
         
         # Mapping ids
-        sequence_sku = np.array(
-            [self.id_mapper.get_sku_id(sku) for sku in sequence_sku], 
+        sequence_sku_id = np.array(
+            [self.id_mapper.get_sku_id(sku) for sku in sequence_sku_id], 
             dtype=np.int64,
         )
-        sequence_category = np.array(
-            [self.id_mapper.get_category_id(category) for category in sequence_category], 
+        sequence_sku_category = np.array(
+            [self.id_mapper.get_category_id(category) for category in sequence_sku_category], 
             dtype=np.int64,
         )
-        sequence_url = np.array(
-            [self.id_mapper.get_url_id(url) for url in sequence_url], 
+        sequence_url_id = np.array(
+            [self.id_mapper.get_url_id(url) for url in sequence_url_id], 
             dtype=np.int64,
         )
-        
-        # # Normalize price, sequence_name and sequence_query
-        # sequence_price = (sequence_price - PRICE_MIN_VALUE) / (PRICE_MAX_VALUE - PRICE_MIN_VALUE)
-        # sequence_price = np.clip(sequence_price, -1, 1, dtype=np.float32)
-        # sequence_name = (sequence_name - NAME_MIN_VALUE) / (NAME_MAX_VALUE - NAME_MIN_VALUE)
-        # sequence_name = np.clip(sequence_name, -1, 1, dtype=np.float32)
-        # sequence_query = (sequence_query - QUERY_MIN_VALUE) / (QUERY_MAX_VALUE - QUERY_MIN_VALUE)
-        # sequence_query = np.clip(sequence_query, -1, 1, dtype=np.float32)
         
         # Padding sequences
-        sequence_sku = self._pad_sequence(sequence_sku, PAD_VALUE_SKU)
-        sequence_category = self._pad_sequence(sequence_category, PAD_VALUE_CATEGORY)
-        sequence_price = self._pad_sequence(sequence_price, PAD_VALUE_PRICE)
-        sequence_name = self._pad_sequence(sequence_name, PAD_VALUE_NAME)
-        # logger.info(f"sequence_stat_feat.shape: {sequence_stat_feat.shape}")
-        # logger.info(f"PAD_VALUE_ITEM_FEATURES.shape: {self.PAD_VALUE_ITEM_FEATURES.shape}")
-        sequence_stat_feat = self._pad_sequence(sequence_stat_feat, self.PAD_VALUE_STAT_FEAT)
-        sequence_event_type = self._pad_sequence(sequence_event_type, PAD_VALUE_EVENT_TYPE)
-        sequence_time_feat = self._pad_sequence(sequence_time_feat, PAD_VALUE_TIME_FEAT)
-        sequence_url = self._pad_sequence(sequence_url, PAD_VALUE_URL)
-        sequence_query = self._pad_sequence(sequence_query, PAD_VALUE_QUERY)
-        # logger.info(f"client_id: {client_id}")
-        # logger.info(f"sequence_sku.shape: {sequence_sku.shape}")
-        # logger.info(f"sequence_category.shape: {sequence_category.shape}")
-        # logger.info(f"sequence_price.shape: {sequence_price.shape}")
-        # logger.info(f"sequence_name.shape: {sequence_name.shape}")
-        # logger.info(f"sequence_event_type.shape: {sequence_event_type.shape}")
-        # logger.info(f"sequence_url.shape: {sequence_url.shape}")
-        # logger.info(f"sequence_query.shape: {sequence_query.shape}")
-        # logger.info(f"sequence_sku_length: {sequence_sku_length}")
-        # logger.info(f"sequence_url_length: {sequence_url_length}")
-        # logger.info(f"sequence_query_length: {sequence_query_length}")
-
-        # logger.info(f"client_id: {client_id}")
-        # logger.info(f"sequence_sku.dtype: {sequence_sku.dtype}")
-        # logger.info(f"sequence_category.dtype: {sequence_category.dtype}")
-        # logger.info(f"sequence_price.dtype: {sequence_price.dtype}")
-        # logger.info(f"sequence_name.dtype: {sequence_name.dtype}")
-        # logger.info(f"sequence_event_type.dtype: {sequence_event_type.dtype}")
-        # logger.info(f"sequence_url.dtype: {sequence_url.dtype}")
-        # logger.info(f"sequence_query.dtype: {sequence_query.dtype}")
-
+        sequence_sku_id = self._pad_sequence(sequence_sku_id, PAD_VALUE_SKU)
+        sequence_sku_category = self._pad_sequence(sequence_sku_category, PAD_VALUE_CATEGORY)
+        sequence_sku_price = self._pad_sequence(sequence_sku_price, PAD_VALUE_PRICE)
+        sequence_sku_name = self._pad_sequence(sequence_sku_name, PAD_VALUE_NAME)
+        sequence_sku_event_type = self._pad_sequence(sequence_sku_event_type, PAD_VALUE_EVENT_TYPE)
+        sequence_sku_time_feat = self._pad_sequence(sequence_sku_time_feat, PAD_VALUE_TIME_FEAT)
+        sequence_sku_timestamp = self._pad_sequence(sequence_sku_timestamp, PAD_VALUE_TIMESTAMP)
+        
+        sequence_url_id = self._pad_sequence(sequence_url_id, PAD_VALUE_URL)
+        sequence_url_event_type = self._pad_sequence(sequence_url_event_type, PAD_VALUE_EVENT_TYPE)
+        sequence_url_time_feat = self._pad_sequence(sequence_url_time_feat, PAD_VALUE_TIME_FEAT)
+        sequence_url_timestamp = self._pad_sequence(sequence_url_timestamp, PAD_VALUE_TIMESTAMP)
+        
+        sequence_query_query = self._pad_sequence(sequence_query_query, PAD_VALUE_QUERY)
+        sequence_query_event_type = self._pad_sequence(sequence_query_event_type, PAD_VALUE_EVENT_TYPE)
+        sequence_query_time_feat = self._pad_sequence(sequence_query_time_feat, PAD_VALUE_TIME_FEAT)
+        sequence_query_timestamp = self._pad_sequence(sequence_query_timestamp, PAD_VALUE_TIMESTAMP)
+    
         # Get user features
         user_features = self.user_features_dict[client_id]
 
-        # logger.info(f"client_id: {client_id}")
-        # logger.info(f"sequence_sku: {sequence_sku}")
-        # logger.info(f"sequence_category: {sequence_category}")
-        # logger.info(f"sequence_price: {sequence_price}")
-        # logger.info(f"sequence_event_type: {sequence_event_type}")
-        # sequence_timestamp = [item["timestamp"] for item in sequence_sku_info]
-        # logger.info(f"sequence_timestamp: {sequence_timestamp}")
-        # logger.info(f"sequence_time_feat: {sequence_time_feat}")
+        # Cast the timestamp to int
+        sequence_sku_timestamp = sequence_sku_timestamp.astype('int64')
+        sequence_url_timestamp = sequence_url_timestamp.astype('int64')
+        sequence_query_timestamp = sequence_query_timestamp.astype('int64')
 
         # Combine the structured data into a single array or return as a tuple
         behavior_data = (
             client_id,
-            sequence_sku, 
-            sequence_category, 
-            sequence_price, 
-            sequence_name, 
-            sequence_stat_feat,
-            sequence_event_type, 
-            sequence_time_feat,
-            sequence_url,
-            sequence_query,
+            sequence_sku_id,
+            sequence_sku_category,
+            sequence_sku_price,
+            sequence_sku_name,
+            sequence_sku_event_type,
+            sequence_sku_time_feat,
+            sequence_sku_timestamp,
+            sequence_url_id,
+            sequence_url_event_type,
+            sequence_url_time_feat,
+            sequence_url_timestamp,
+            sequence_query_query,
+            sequence_query_event_type,
+            sequence_query_time_feat,
+            sequence_query_timestamp,
             sequence_sku_length, 
             sequence_url_length,
             sequence_query_length,
             user_features,
         )
         
-        # if np.any(sequence_name > 1) or np.any(sequence_name < -1):
-        #     logger.info(f"Out of range values found in sequence_name, max: {np.max(sequence_name)}, min: {np.min(sequence_name)}")
-
-        # if np.any(sequence_query > 1) or np.any(sequence_query < -1):
-        #     logger.info(f"Out of range values found in sequence_query, max: {np.max(sequence_query)}, min: {np.min(sequence_query)}")
-
+        # if client_id in [13587]:
+        #     logger.info(f"idx: \n {idx}")
+        #     logger.info(f"is_augmentation: \n {is_augmentation}")
+        #     logger.info(f"client_id: \n {client_id}")
+        #     logger.info(f"sequence_sku_id: \n {sequence_sku_id}")
+        #     logger.info(f"sequence_sku_category: \n {sequence_sku_category}")
+        #     logger.info(f"sequence_sku_price: \n {sequence_sku_price}")
+        #     logger.info(f"sequence_sku_event_type: \n {sequence_sku_event_type}")
+        #     # logger.info(f"sequence_sku_time_feat: \n {sequence_sku_time_feat}")
+        #     logger.info(f"sequence_sku_timestamp: \n {sequence_sku_timestamp}")
+        #     logger.info(f"sequence_url_id: \n {sequence_url_id}")
+        #     logger.info(f"sequence_url_event_type: \n {sequence_url_event_type}")
+        #     # logger.info(f"sequence_url_time_feat: \n {sequence_url_time_feat}")
+        #     logger.info(f"sequence_url_timestamp: \n {sequence_url_timestamp}")
+        #     # logger.info(f"sequence_query_query: \n {sequence_query_query}")
+        #     logger.info(f"sequence_query_event_type: \n {sequence_query_event_type}")
+        #     # logger.info(f"sequence_query_time_feat: \n {sequence_query_time_feat}")
+        #     logger.info(f"sequence_query_timestamp: \n {sequence_query_timestamp}")
+        #     logger.info(f"sequence_sku_length: \n {sequence_sku_length}")
+        #     logger.info(f"sequence_url_length: \n {sequence_url_length}")
+        #     logger.info(f"sequence_query_length: \n {sequence_query_length}")
+        #     logger.info(f"-" * 50)
+        
         return (behavior_data, target) if not is_augmentation and self.mode == "train" else behavior_data
     

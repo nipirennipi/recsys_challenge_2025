@@ -23,8 +23,6 @@ from multi_task.preprocess_data import (
 from multi_task.constants import (
     NAME_MIN_VALUE,
     NAME_MAX_VALUE,
-    PRICE_MIN_VALUE,
-    PRICE_MAX_VALUE,
 )
 from multi_task.utils import (
     parse_to_array,
@@ -64,9 +62,9 @@ class BehavioralDataModule(pl.LightningDataModule):
         
         self.properties_dict: Dict[int, Dict[str, object]] = {}
         self.item_features_dict: Dict[int, Dict[datetime, np.ndarray]] = {}
-        self.item_features_dim: int
-        self._load_properties_dict()
-        self._load_item_features_dict()
+        self.item_features_dim: int = 0
+        # self._load_properties_dict()
+        # self._load_item_features_dict()
 
     def setup(self, stage) -> None:
         if stage == "fit":
@@ -115,8 +113,9 @@ class BehavioralDataModule(pl.LightningDataModule):
         properties["name"] = (properties["name"] - NAME_MIN_VALUE) / (NAME_MAX_VALUE - NAME_MIN_VALUE)
         properties["name"] = properties["name"].apply(lambda x: np.clip(x, 0, 1).astype(np.float32))
         
-        properties["price"] = (properties["price"] - PRICE_MIN_VALUE) / (PRICE_MAX_VALUE - PRICE_MIN_VALUE)
-        properties["price"] = properties["price"].apply(lambda x: np.clip(x, 0, 1).astype(np.float32))
+        # properties["price"] = (properties["price"] - PRICE_MIN_VALUE) / (PRICE_MAX_VALUE - PRICE_MIN_VALUE)
+        # properties["price"] = properties["price"].apply(lambda x: np.clip(x, 0, 1).astype(np.float32))
+        properties["price"] = properties["price"] + 1 # 0 for padding
 
         self.properties_dict = (
             properties[["sku", "category", "price", "name"]]

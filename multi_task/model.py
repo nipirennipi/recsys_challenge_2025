@@ -11,10 +11,11 @@ from multi_task.metrics_containers import (
     MetricContainer,
 )
 from multi_task.constants import (
+    NUM_PRICE_BINS,
     QUERY_EMBEDDING_DIM,
     SKU_ID_EMBEDDING_DIM,
     SKU_CATEGORY_EMBEDDING_DIM,
-    EVENT_TYPE_EMBEDDING_DIM,
+    SKU_PRICE_EMBEDDING_DIM,
     URL_EMBEDDING_DIM,
     NAME_EMBEDDING_DIM,
     # LSTM_HIDDEN_SIZE,
@@ -22,6 +23,7 @@ from multi_task.constants import (
     # LSTM_DROPOUT,
     # LSTM_BIDIRECTIONAL,
     SKU_EMBEDDING_DIM,
+    SASREC_HIDDEN_DIM,
     SASREC_NUM_HEADS,
     SASREC_NUM_LAYERS,
     NUM_CROSS_LAYERS,
@@ -104,13 +106,13 @@ class SKUEmbeddingLayer(nn.Module):
             embedding_dim=SKU_CATEGORY_EMBEDDING_DIM, 
             padding_idx=0
         )
-        self.event_type_embedding = nn.Embedding(
-            num_embeddings=event_type_vocab_size + 1, 
-            embedding_dim=EVENT_TYPE_EMBEDDING_DIM, 
+        self.price_embedding = nn.Embedding(
+            num_embeddings=NUM_PRICE_BINS + 1, 
+            embedding_dim=SKU_PRICE_EMBEDDING_DIM, 
             padding_idx=0
         )
 
-    def forward(self, sku: Tensor, category: Tensor, event_type: Tensor) -> Tensor:
+    def forward(self, sku: Tensor, category: Tensor, price: Tensor) -> Tensor:
         """
         Forward pass for the embedding layer.
 
@@ -124,8 +126,8 @@ class SKUEmbeddingLayer(nn.Module):
         """
         sku_emb = self.sku_embedding(sku)
         category_emb = self.category_embedding(category)
-        event_type_emb = self.event_type_embedding(event_type)
-        return torch.cat([sku_emb, category_emb, event_type_emb], dim=-1)
+        price_emb = self.price_embedding(price)
+        return torch.cat([sku_emb, category_emb, price_emb], dim=-1)
 
 
 class DCNV2(nn.Module):
@@ -356,21 +358,42 @@ class SequenceModeling(nn.Module):
         self.url_embedding_layer = URLEmbeddingLayer(
             url_vocab_size=url_vocab_size,
         )
-        self.sku_seq_encoder = SASRec(
-            hidden_dim=SKU_EMBEDDING_DIM,
+        self.event_type_embedding = nn.Embedding(
+            num_embeddings=event_type_vocab_size + 1, 
+            embedding_dim=SASREC_HIDDEN_DIM, 
+            padding_idx=0
+        )
+        
+        self.sku_projection = nn.Sequential(
+            nn.Linear(
+                in_features=SKU_EMBEDDING_DIM + TIME_FEAT_DIM, 
+                out_features=SASREC_HIDDEN_DIM
+            ),
+            nn.LayerNorm(SASREC_HIDDEN_DIM)
+        )
+        self.url_projection = nn.Sequential(
+            nn.Linear(
+            in_features=URL_EMBEDDING_DIM + TIME_FEAT_DIM, 
+            out_features=SASREC_HIDDEN_DIM
+            ),
+            nn.LayerNorm(SASREC_HIDDEN_DIM)
+        )
+        self.query_projection = nn.Sequential(
+            nn.Linear(
+                in_features=QUERY_EMBEDDING_DIM + TIME_FEAT_DIM, 
+                out_features=SASREC_HIDDEN_DIM
+            ),
+            nn.LayerNorm(SASREC_HIDDEN_DIM)
+        )
+        
+        self.unified_seq_encoder = SASRec(
+            hidden_dim=SASREC_HIDDEN_DIM,
             num_heads=SASREC_NUM_HEADS,
             num_layers=SASREC_NUM_LAYERS,
             max_seq_len=MAX_SEQUENCE_LENGTH,
             dropout=0.1,
         )
-        self.url_seq_encoder = SASRec(
-            hidden_dim=URL_EMBEDDING_DIM,
-            num_heads=SASREC_NUM_HEADS,
-            num_layers=SASREC_NUM_LAYERS,
-            max_seq_len=MAX_SEQUENCE_LENGTH,
-            dropout=0.1,
-        )
-        self.query_seq_encoder = AveragePooling()
+
         self.dcnv2 = DCNV2(
             input_dim=EMBEDDING_DIM,
         )
@@ -391,67 +414,97 @@ class SequenceModeling(nn.Module):
         """
         (
             client_id,
-            sequence_sku, 
-            sequence_category, 
-            sequence_price, 
-            sequence_name, 
-            sequence_stat_feat,
-            sequence_event_type, 
-            sequence_time_feat,
-            sequence_url,
-            sequence_query,
-            sequence_sku_length,
+            sequence_sku_id,
+            sequence_sku_category,
+            sequence_sku_price,
+            sequence_sku_name,
+            sequence_sku_event_type,
+            sequence_sku_time_feat,
+            sequence_sku_timestamp,
+            sequence_url_id,
+            sequence_url_event_type,
+            sequence_url_time_feat,
+            sequence_url_timestamp,
+            sequence_query_query,
+            sequence_query_event_type,
+            sequence_query_time_feat,
+            sequence_query_timestamp,
+            sequence_sku_length, 
             sequence_url_length,
             sequence_query_length,
             user_features,
         ) = x
+        
         # Generate embeddings for the input sequences
-        sku_embedding = self.sku_embedding_layer(sequence_sku, sequence_category, sequence_event_type)
-        price_embedding = sequence_price.unsqueeze(-1)
-        name_embedding = sequence_name
-        stat_feat_embedding = sequence_stat_feat
-        time_feat_embedding = sequence_time_feat
         sku_embedding = torch.cat(
-            [sku_embedding, price_embedding, name_embedding, stat_feat_embedding, time_feat_embedding], 
+            [
+                self.sku_embedding_layer(sequence_sku_id, sequence_sku_category, sequence_sku_price), 
+                sequence_sku_name, 
+                sequence_sku_time_feat
+            ],
             dim=-1
         )
 
-        # Pass through SASRec, respectively for sku, url, and query
-        sku_seq_output = self.sku_seq_encoder(sku_embedding, sequence_sku_length)
-        
-        url_embedding = self.url_embedding_layer(sequence_url)
-        url_seq_output = self.url_seq_encoder(url_embedding, sequence_url_length)
-        
-        query_embedding = sequence_query
-        query_seq_output = self.query_seq_encoder(query_embedding, sequence_query_length)
-
-        # Concatenate user_features, sku_seq_output, url_seq_output, and query_seq_output
-        combined_feat = torch.cat(
+        url_embedding = torch.cat(
             [
-                user_features, 
-                sku_seq_output, 
-                url_seq_output, 
-                query_seq_output
+                self.url_embedding_layer(sequence_url_id), 
+                sequence_url_time_feat,
             ], 
             dim=-1
         )
-        # Log if combined_feat contains values greater than 10000 or less than -10000
-        # if torch.any(combined_feat > 100) or torch.any(combined_feat < -100):
-        #     logger.info(
-        #         "combined_feat out of range: max=%s, min=%s", 
-        #         torch.max(combined_feat).item(), 
-        #         torch.min(combined_feat).item()
-        #     )
+        
+        query_embedding = torch.cat(
+            [
+                sequence_query_query, 
+                sequence_query_time_feat
+            ], 
+            dim=-1
+        )
+        
+        # Data Arrangement
+        sku_token = self.sku_projection(sku_embedding)
+        url_token = self.url_projection(url_embedding)
+        query_token = self.query_projection(query_embedding)
+        
+        # Combine all sequences with timestamps
+        combined_seq_token, combined_seq_event_type, combined_seq_length = combine_sequence(
+            sequence_sku_timestamp,
+            sequence_sku_event_type,
+            sequence_sku_length,
+            sequence_url_timestamp,
+            sequence_url_event_type,
+            sequence_url_length,
+            sequence_query_timestamp,
+            sequence_query_event_type,
+            sequence_query_length,
+            sku_token,
+            url_token,
+            query_token,
+        )
+        
+        # Get event type embeddings
+        comdined_seq_event_type_embedding = self.event_type_embedding(combined_seq_event_type)
+        
+        # Add sequence tokens with event type embeddings
+        combined_seq_input = combined_seq_token + comdined_seq_event_type_embedding
+        
+        # Pass through the unified sequence encoder
+        unified_seq_output = self.unified_seq_encoder(
+            seq_emb=combined_seq_input, 
+            seq_len=combined_seq_length
+        )
+
+        # Concatenate user_features, unified_seq_output
+        combined_feat = torch.cat(
+            [
+                user_features, 
+                unified_seq_output, 
+            ], 
+            dim=-1
+        )
+        
         user_representation = self.dcnv2(combined_feat)
-        
-        # Log if user_representation contains values greater than 10000 or less than -10000
-        if torch.any(user_representation > 10000) or torch.any(user_representation < -10000):
-            logger.info(
-                "user_representation out of range: max=%s, min=%s", 
-                torch.max(user_representation).item(), 
-                torch.min(user_representation).item()
-            )
-        
+                
         # Record user representation
         if not self.training:
             client_id = client_id.cpu().numpy()
@@ -704,3 +757,82 @@ class UniversalModel(pl.LightningModule):
         #     )
 
         # self.metrics_tracker.append(metric_container)
+
+
+def combine_sequence(
+    sequence_sku_timestamp: Tensor,
+    sequence_sku_event_type: Tensor,
+    sequence_sku_length: Tensor,
+    sequence_url_timestamp: Tensor,
+    sequence_url_event_type: Tensor,
+    sequence_url_length: Tensor,
+    sequence_query_timestamp: Tensor, 
+    sequence_query_event_type: Tensor,
+    sequence_query_length: Tensor,
+    sku_token: Tensor,
+    url_token: Tensor,
+    query_token: Tensor,
+):
+    batch_size = sequence_sku_timestamp.size(0)
+    device = sequence_sku_timestamp.device
+    token_dim = sku_token.size(-1)
+    
+    # 1. Create mask tensors (1 for valid events, 0 for padding)
+    max_sku_len = sequence_sku_timestamp.size(1)
+    max_url_len = sequence_url_timestamp.size(1)
+    max_query_len = sequence_query_timestamp.size(1)
+    
+    sku_mask = torch.arange(max_sku_len, device=device).expand(batch_size, -1) < sequence_sku_length.unsqueeze(1)
+    url_mask = torch.arange(max_url_len, device=device).expand(batch_size, -1) < sequence_url_length.unsqueeze(1)
+    query_mask = torch.arange(max_query_len, device=device).expand(batch_size, -1) < sequence_query_length.unsqueeze(1)
+
+    # 2. Combine all sequences while preserving mask information
+    combined_tokens = torch.cat([sku_token, url_token, query_token], dim=1)  # (B, L1+L2+L3, D)
+    combined_event_types = torch.cat([sequence_sku_event_type, sequence_url_event_type, sequence_query_event_type], dim=1)  # (B, L1+L2+L3)
+    combined_timestamps = torch.cat([sequence_sku_timestamp, sequence_url_timestamp, sequence_query_timestamp], dim=1)  # (B, L1+L2+L3)
+    combined_mask = torch.cat([sku_mask, url_mask, query_mask], dim=1)  # (B, L1+L2+L3)
+
+    # 3. Create a large timestamp value for padding positions to push them to the end
+    LARGE_TIMESTAMP = torch.iinfo(torch.int64).max
+    combined_timestamps = torch.where(
+        combined_mask,
+        combined_timestamps,
+        torch.full_like(combined_timestamps, LARGE_TIMESTAMP)
+    )
+
+
+    # 4. Sort by timestamp
+    sorted_indices = torch.argsort(combined_timestamps, dim=1)  # (B, L1+L2+L3)
+    sorted_tokens = torch.gather(
+        combined_tokens,
+        1,
+        sorted_indices.unsqueeze(-1).expand(-1, -1, token_dim)
+    )  # (B, L1+L2+L3, D)
+    sorted_event_types = torch.gather(
+        combined_event_types,
+        1,
+        sorted_indices
+    )  # (B, L1+L2+L3)
+
+    # 5. Calculate the number of valid events
+    total_valid = sequence_sku_length + sequence_url_length + sequence_query_length
+    actual_lengths = torch.clamp(total_valid, max=MAX_SEQUENCE_LENGTH)
+
+    # 6. Vectorized truncation: extract the latest 
+    # min(total_valid, MAX_SEQUENCE_LENGTH) events for each sample
+    tokens_output = torch.zeros(batch_size, MAX_SEQUENCE_LENGTH, token_dim, device=device, dtype=sorted_tokens.dtype)
+    event_types_output = torch.zeros(batch_size, MAX_SEQUENCE_LENGTH, device=device, dtype=sorted_event_types.dtype)
+
+    start_indices = torch.clamp(total_valid - MAX_SEQUENCE_LENGTH, min=0)
+    
+    batch_indices = torch.arange(batch_size, device=device).unsqueeze(1)
+    seq_indices = torch.arange(MAX_SEQUENCE_LENGTH, device=device).unsqueeze(0) 
+    
+    valid_indices = start_indices.unsqueeze(1) + seq_indices 
+    valid_indices = torch.clamp(valid_indices, max=total_valid.unsqueeze(1) - 1) 
+    mask = seq_indices < actual_lengths.unsqueeze(1) 
+
+    tokens_output[mask] = sorted_tokens[batch_indices, valid_indices][mask]
+    event_types_output[mask] = sorted_event_types[batch_indices, valid_indices][mask]
+
+    return tokens_output, event_types_output, actual_lengths

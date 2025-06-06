@@ -97,6 +97,15 @@ def create_features(
     #     events, client_ids, END_TIME, properties_dict, category_targets
     # )
 
+    # # Statistical features: sku propensity
+    # logger.info("Calculating sku propensity features")
+    # sku_targets = load_propensity_targets(
+    #     target_dir, PropensityTasks.PROPENSITY_SKU
+    # )
+    # sku_stats = create_sku_propensity_features(
+    #     events, client_ids, END_TIME, sku_targets
+    # )
+
     logger.info("Combining all features into a single DataFrame")
     dfs = (
         [client_ids] + user_first_last + [time_diff_stats] + 
@@ -133,6 +142,65 @@ def load_propensity_targets(
         allow_pickle=True,
     )
     return propensity_targets
+
+
+def create_sku_propensity_features(
+    events: Dict[str, pd.DataFrame],
+    client_ids: pd.DataFrame,
+    end_time: pd.Timestamp,
+    sku_targets: np.ndarray,
+) -> List:
+    sku_stats = []
+
+    for event_type in ["product_buy", "add_to_cart", "remove_from_cart"]:
+        df = events[event_type].copy()
+        target_df = df[df["sku"].isin(sku_targets)]
+        
+        # 1. SKU Statistics
+        for time_window in ["all"]:
+            if time_window == "30d":
+                target_window_df = target_df[target_df["timestamp"] >= (end_time - pd.Timedelta(days=30))]
+            else:
+                target_window_df = target_df
+            
+            sku_counts = target_window_df.groupby(
+                ["client_id", "sku"]
+            ).size().unstack(fill_value=0)
+            
+            for sku_id in sku_targets:
+                if sku_id not in sku_counts.columns:
+                    sku_counts[sku_id] = 0
+            
+            sku_counts.columns = [
+                f"{event_type}_target_sku_count_{col}_{time_window}" for col in sku_counts.columns
+            ]
+            sku_counts = sku_counts.reset_index()
+            sku_counts = client_ids.merge(sku_counts, on="client_id", how="left").fillna(0)
+            sku_stats.append(sku_counts)
+        
+        # 2. SKU Diversity
+        unique_sku = (
+            target_df.groupby("client_id")["sku"].nunique().
+            reset_index(name=f"{event_type}_unique_target_sku")
+        )
+        
+        diversity_df = client_ids.merge(unique_sku, on="client_id", how="left").fillna(0)
+        sku_stats.append(diversity_df)
+
+        # 3. Target SKU Proportion
+        target_counts = target_df.groupby("client_id").size().reset_index(name="target_count")
+        total_counts = df.groupby("client_id").size().reset_index(name="total_count")
+        
+        proportion_df = pd.merge(target_counts, total_counts, on="client_id", how="right").fillna(0)
+        proportion_df[f"{event_type}_target_sku_proportion"] = (
+            proportion_df["target_count"] / proportion_df["total_count"]
+        ).fillna(0)
+        
+        proportion_df = proportion_df[["client_id", f"{event_type}_target_sku_proportion"]]
+        proportion_df = client_ids.merge(proportion_df, on="client_id", how="left").fillna(0)
+        sku_stats.append(proportion_df)
+        
+    return sku_stats
 
 
 def create_category_propensity_features(
@@ -267,7 +335,7 @@ def create_price_propensity_features(
 
 
 def save_features(features_dir: Path, features: pd.DataFrame) -> None:
-    logger.info("Saving features")
+    logger.info(f"Saving features for {len(features)} users")
     features_dir.mkdir(parents=True, exist_ok=True)
     output_file = features_dir / "user_features.parquet"
     features.to_parquet(output_file, index=False)
