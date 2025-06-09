@@ -2,10 +2,11 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import logging
+import torch
 
-from typing import Dict, Tuple, List, Set
+from typing import Dict, Tuple, List, Set, Iterator, Sized
 from datetime import datetime
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 
 from data_utils.data_dir import DataDir
 from multi_task.dataset import (
@@ -23,6 +24,8 @@ from multi_task.preprocess_data import (
 from multi_task.constants import (
     NAME_MIN_VALUE,
     NAME_MAX_VALUE,
+    BATCH_SIZE,
+    GROUP_SIZE
 )
 from multi_task.utils import (
     parse_to_array,
@@ -63,8 +66,8 @@ class BehavioralDataModule(pl.LightningDataModule):
         self.properties_dict: Dict[int, Dict[str, object]] = {}
         self.item_features_dict: Dict[int, Dict[datetime, np.ndarray]] = {}
         self.item_features_dim: int = 0
-        # self._load_properties_dict()
-        # self._load_item_features_dict()
+        self._load_properties_dict()
+        self._load_item_features_dict()
 
     def setup(self, stage) -> None:
         if stage == "fit":
@@ -80,6 +83,10 @@ class BehavioralDataModule(pl.LightningDataModule):
                 item_stat_feat_dim=self.item_features_dim,
                 mode="train",
             )
+            self.train_sampler = ChunkedShuffleSampler(
+                dataset_size=len(self.train_data),
+                chunk_size=BATCH_SIZE * GROUP_SIZE,
+            )
 
             logger.info("Constructing validation dataset")
             self.validation_data = BehavioralDataset(
@@ -91,6 +98,10 @@ class BehavioralDataModule(pl.LightningDataModule):
                 item_stat_feat_dict=self.item_features_dict,
                 item_stat_feat_dim=self.item_features_dim,
                 mode="validation",
+            )
+            self.validation_sampler = ChunkedShuffleSampler(
+                dataset_size=len(self.validation_data),
+                chunk_size=BATCH_SIZE * GROUP_SIZE,
             )
             
             # Release memory
@@ -146,7 +157,10 @@ class BehavioralDataModule(pl.LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
-            self.train_data, batch_size=self.batch_size, num_workers=self.num_workers
+            self.train_data, 
+            batch_size=self.batch_size, 
+            num_workers=self.num_workers,
+            sampler=self.train_sampler,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -154,4 +168,43 @@ class BehavioralDataModule(pl.LightningDataModule):
             self.validation_data,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
+            sampler=self.validation_sampler,
         )
+
+class ChunkedShuffleSampler(Sampler[int]):
+    """
+    Chunked random sampler.
+    It first randomly shuffles the order of chunks, and then randomly shuffles 
+    the order of samples within each chunk. This can significantly improve IO 
+    efficiency when processing large datasets that need to be read from disk in 
+    chunks, while maintaining good randomness.
+
+    Args:
+        dataset_size (int): Number of sample in Dataset object.
+        chunk_size (int): The number of samples contained in each chunk.
+        seed (int, optional): Seed for reproducible randomization.
+    """
+
+    def __init__(self, dataset_size: int, chunk_size: int):
+        super().__init__()
+        self.dataset_size = dataset_size
+        self.chunk_size = chunk_size
+        self.num_chunks = (self.dataset_size + self.chunk_size - 1) // self.chunk_size
+
+    def __len__(self) -> int:
+        return self.dataset_size
+
+    def __iter__(self) -> Iterator[int]:
+        seed = int(torch.empty((), dtype=torch.int64).random_().item())
+        g = torch.Generator()
+        g.manual_seed(seed)
+
+        chunk_indices = torch.randperm(self.num_chunks, generator=g).tolist()
+
+        for chunk_idx in chunk_indices:
+            start_idx = chunk_idx * self.chunk_size
+            end_idx = min(start_idx + self.chunk_size, self.dataset_size)
+            samples_in_chunk = torch.arange(start_idx, end_idx, dtype=torch.int64)
+            shuffled_indices_in_chunk = samples_in_chunk[torch.randperm(len(samples_in_chunk), generator=g)]
+
+            yield from shuffled_indices_in_chunk.tolist()

@@ -433,7 +433,17 @@ class SequenceModeling(nn.Module):
             sequence_url_length,
             sequence_query_length,
             user_features,
+            # cate_target_count,
+            # cate_diversity,
+            # cate_target_prop,
+            # sku_target_count, 
+            # sku_diversity, 
+            # sku_target_prop,
         ) = x
+        
+        # # Project target features
+        # cate_target_count = self.cate_target_projection(cate_target_count)
+        # sku_target_count = self.sku_target_projection(sku_target_count)
         
         # Generate embeddings for the input sequences
         sku_embedding = torch.cat(
@@ -495,6 +505,14 @@ class SequenceModeling(nn.Module):
         )
 
         # Concatenate user_features, unified_seq_output
+        # logger.info("User features shape: %s", user_features.shape)
+        # logger.info("SKU target count shape: %s", sku_target_count.shape)
+        # logger.info("SKU diversity shape: %s", sku_diversity.shape)
+        # logger.info("SKU target prop shape: %s", sku_target_prop.shape)
+        # logger.info("Category target count shape: %s", cate_target_count.shape)
+        # logger.info("Category diversity shape: %s", cate_diversity.shape)
+        # logger.info("Category target prop shape: %s", cate_target_prop.shape)
+
         combined_feat = torch.cat(
             [
                 user_features, 
@@ -637,6 +655,10 @@ class UniversalModel(pl.LightningModule):
         self.contrastive_temp = CONTRASTIVE_TEMP
         self.contrastive_lambda = CONTRASTIVE_LAMBDA
         self.nce_fct = nn.CrossEntropyLoss()
+        
+        self.training_step_contrastive_loss = []
+        self.training_step_outputs_task_loss = []
+        self.training_step_outputs_total_loss = []
 
     def compute_contrastive_loss(
         self, 
@@ -698,6 +720,7 @@ class UniversalModel(pl.LightningModule):
             prog_bar=True, 
             logger=True
         )
+        self.training_step_contrastive_loss.append(contrastive_loss)
         
         # Compute task-specific loss
         preds = (
@@ -711,6 +734,9 @@ class UniversalModel(pl.LightningModule):
             prog_bar=True, 
             logger=True
         )
+        self.training_step_outputs_task_loss.append(task_loss)
+        
+        # Compute total loss
         total_loss = task_loss + self.contrastive_lambda * contrastive_loss
         self.log(
             "train_loss", 
@@ -719,6 +745,7 @@ class UniversalModel(pl.LightningModule):
             prog_bar=True, 
             logger=True
         )
+        self.training_step_outputs_total_loss.append(total_loss)
 
         return total_loss
 
@@ -743,6 +770,32 @@ class UniversalModel(pl.LightningModule):
         #     predictions=preds,
         #     targets=y.long(),
         # )
+
+    def on_train_epoch_end(self) -> None:
+
+        self.log(
+            "contrastive_loss_mean",
+            torch.stack(self.training_step_contrastive_loss).mean(),
+            prog_bar=True, 
+            logger=True
+        )
+        self.training_step_contrastive_loss.clear()
+        
+        self.log(
+            "mean_task_loss_mean",
+            torch.stack(self.training_step_outputs_task_loss).mean(),
+            prog_bar=True, 
+            logger=True
+        )
+        self.training_step_outputs_task_loss.clear()
+        
+        self.log(
+            "train_loss_mean", 
+            torch.stack(self.training_step_outputs_total_loss).mean(),
+            prog_bar=True, 
+            logger=True
+        )
+        self.training_step_outputs_total_loss.clear()
 
     def on_validation_epoch_end(self) -> None:
         pass

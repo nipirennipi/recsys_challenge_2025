@@ -536,6 +536,18 @@ class BehavioralDataset(Dataset):
         sequence_sku_timestamp = sequence_sku_timestamp.astype('int64')
         sequence_url_timestamp = sequence_url_timestamp.astype('int64')
         sequence_query_timestamp = sequence_query_timestamp.astype('int64')
+        # 
+        # cate_target_count, cate_diversity, cate_target_prop = create_target_propensity_features(
+        #     sequence_sku_info=sequence_sku_info,
+        #     propensity_targets=self.category_targets,
+        #     target_col="category",
+        # )
+        
+        # sku_target_count, sku_diversity, sku_target_prop = create_target_propensity_features(
+        #     sequence_sku_info=sequence_sku_info,
+        #     propensity_targets=self.sku_targets,
+        #     target_col="sku",
+        # )
 
         # Combine the structured data into a single array or return as a tuple
         behavior_data = (
@@ -559,9 +571,15 @@ class BehavioralDataset(Dataset):
             sequence_url_length,
             sequence_query_length,
             user_features,
+            # cate_target_count,
+            # cate_diversity,
+            # cate_target_prop,
+            # sku_target_count, 
+            # sku_diversity, 
+            # sku_target_prop,
         )
         
-        # if client_id in [13587]:
+        # if sequence_sku_length >= 1:
         #     logger.info(f"idx: \n {idx}")
         #     logger.info(f"is_augmentation: \n {is_augmentation}")
         #     logger.info(f"client_id: \n {client_id}")
@@ -585,4 +603,61 @@ class BehavioralDataset(Dataset):
         #     logger.info(f"-" * 50)
         
         return (behavior_data, target) if not is_augmentation and self.mode == "train" else behavior_data
+
+def create_target_propensity_features(
+        sequence_sku_info: List[Dict],
+        propensity_targets: np.ndarray,
+        target_col: str,
+):
+
+    target_counts = {target: [0, 0, 0] for target in propensity_targets}
+    diversity_sets = {
+        EventTypes.PRODUCT_BUY.get_index(): set(),
+        EventTypes.ADD_TO_CART.get_index(): set(),
+        EventTypes.REMOVE_FROM_CART.get_index(): set()
+    }
     
+    total_events = 0
+    target_events = 0
+
+    for item in sequence_sku_info:
+        event_type = item["event_type"]
+        target = item[target_col]
+        
+        if event_type not in diversity_sets:
+            continue
+            
+        total_events += 1
+        diversity_sets[event_type].add(target)
+        
+        if target in propensity_targets:
+            target_events += 1
+            
+            if event_type == EventTypes.PRODUCT_BUY.get_index():
+                target_counts[target][0] += 1
+            elif event_type == EventTypes.ADD_TO_CART.get_index():
+                target_counts[target][1] += 1
+            else:  # REMOVE_FROM_CART
+                target_counts[target][2] += 1
+
+    # 1. Target Statistics
+    count_features = []
+    for target in propensity_targets:
+        count_features.extend(target_counts[target])
+    
+    # 2. Target Diversity
+    diversity_features = np.array([
+        len(diversity_sets[EventTypes.PRODUCT_BUY.get_index()]),
+        len(diversity_sets[EventTypes.ADD_TO_CART.get_index()]),
+        len(diversity_sets[EventTypes.REMOVE_FROM_CART.get_index()])
+    ])
+    
+    # 3. Target Proportion
+    proportion = target_events / total_events if total_events > 0 else 0.0
+    
+    # Normalization
+    count_features = np.log1p(count_features, dtype=np.float32)
+    diversity_features = np.log1p(diversity_features, dtype=np.float32)
+    proportion = np.array([proportion], dtype=np.float32)
+    
+    return count_features, diversity_features, proportion
