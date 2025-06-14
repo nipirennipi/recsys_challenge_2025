@@ -1,3 +1,5 @@
+DEVICE_ID=${1:-0}
+
 VERSION=multi_task
 mkdir -p "./${VERSION}/score"
 
@@ -7,6 +9,6 @@ python -m training_pipeline.train \
     --tasks churn propensity_category propensity_sku \
     --log-name "${VERSION}" \
     --accelerator gpu \
-    --devices 1 \
+    --devices ${DEVICE_ID} \
     --score-dir "./${VERSION}/score" \
     --disable-relevant-clients-check

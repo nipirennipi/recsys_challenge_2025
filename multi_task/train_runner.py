@@ -139,6 +139,7 @@ def run_training(
         callbacks=RichProgressBar(leave=True),
         log_every_n_steps=5000,
         check_val_every_n_epoch=MAX_EPOCH,
+        enable_checkpointing=False,
     )
 
     trainer.fit(model=model, datamodule=data)

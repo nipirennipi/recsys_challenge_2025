@@ -1,5 +1,6 @@
 VERSION=multi_task
-STATE=offline
+STATE=online
+DEVICE_ID=0
 EMBEDDINGS_DIR="/data/lyjiang/RecSys_Challenge_2025/submit/${VERSION}/${STATE}"
 
 mkdir -p "${EMBEDDINGS_DIR}"
@@ -19,9 +20,9 @@ python -m multi_task.train \
     --tasks churn propensity_category propensity_sku propensity_price \
     --log-name "${VERSION}" \
     --accelerator gpu \
-    --devices 3 \
+    --devices ${DEVICE_ID} \
     --disable-relevant-clients-check
 
 if [ "${STATE}" = "offline" ]; then
-    ./training.sh
+    ./training.sh ${DEVICE_ID}
 fi

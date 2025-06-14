@@ -279,10 +279,10 @@ def create_price_propensity_features(
     properties_dict: Dict[str, Dict[str, int]]
 ) -> List:
     price_stats  = []
-    bins = [-1, 19, 39, 59, 79, 100]  # Adjust 100 if max price bucket is 99
-    labels = [0, 1, 2, 3, 4] # 5 tiers
+    bins = [-1, 9, 19, 29, 39, 49, 59, 69, 79, 89, 100]  # Adjust 100 if max price bucket is 99
+    labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] # 10 tiers
 
-    for event_type in ["product_buy", "add_to_cart"]:
+    for event_type in ["product_buy", "add_to_cart", "remove_from_cart"]:
         df = events[event_type].copy()
         df["price"] = df["sku"].map(lambda sku: properties_dict[sku]["price"])
         df["price_tier"] = pd.cut(df["price"], bins=bins, labels=labels, right=True).astype(int)

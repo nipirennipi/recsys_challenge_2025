@@ -118,6 +118,9 @@ class BehavioralDataset(Dataset):
         # self.sku_targets = load_propensity_targets(
         #     self.data_dir, PropensityTasks.PROPENSITY_SKU
         # )
+        # self.price_targets = load_propensity_targets(
+        #     self.data_dir, PropensityTasks.PROPENSITY_PRICE
+        # )
 
     def _load_user_features_dict(self) -> None:
         """
@@ -548,6 +551,12 @@ class BehavioralDataset(Dataset):
         #     propensity_targets=self.sku_targets,
         #     target_col="sku",
         # )
+        
+        # price_target_count, price_diversity, price_target_prop = create_target_propensity_features(
+        #     sequence_sku_info=sequence_sku_info,
+        #     propensity_targets=self.price_targets,
+        #     target_col="price",
+        # )
 
         # Combine the structured data into a single array or return as a tuple
         behavior_data = (
@@ -577,6 +586,9 @@ class BehavioralDataset(Dataset):
             # sku_target_count, 
             # sku_diversity, 
             # sku_target_prop,
+            # price_target_count,
+            # price_diversity,
+            # price_target_prop,
         )
         
         # if sequence_sku_length >= 1:
@@ -587,6 +599,9 @@ class BehavioralDataset(Dataset):
         #     logger.info(f"sequence_sku_category: \n {sequence_sku_category}")
         #     logger.info(f"sequence_sku_price: \n {sequence_sku_price}")
         #     logger.info(f"sequence_sku_event_type: \n {sequence_sku_event_type}")
+        #     logger.info(f"cate_target_count: \n {cate_target_count}")
+        #     logger.info(f"sku_target_count: \n {sku_target_count}")
+        #     logger.info(f"price_target_count: \n {price_target_count}")
         #     # logger.info(f"sequence_sku_time_feat: \n {sequence_sku_time_feat}")
         #     logger.info(f"sequence_sku_timestamp: \n {sequence_sku_timestamp}")
         #     logger.info(f"sequence_url_id: \n {sequence_url_id}")

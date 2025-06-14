@@ -66,8 +66,8 @@ class BehavioralDataModule(pl.LightningDataModule):
         self.properties_dict: Dict[int, Dict[str, object]] = {}
         self.item_features_dict: Dict[int, Dict[datetime, np.ndarray]] = {}
         self.item_features_dim: int = 0
-        self._load_properties_dict()
-        self._load_item_features_dict()
+        # self._load_properties_dict()
+        # self._load_item_features_dict()
 
     def setup(self, stage) -> None:
         if stage == "fit":

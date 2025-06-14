@@ -433,12 +433,6 @@ class SequenceModeling(nn.Module):
             sequence_url_length,
             sequence_query_length,
             user_features,
-            # cate_target_count,
-            # cate_diversity,
-            # cate_target_prop,
-            # sku_target_count, 
-            # sku_diversity, 
-            # sku_target_prop,
         ) = x
         
         # # Project target features
@@ -771,31 +765,34 @@ class UniversalModel(pl.LightningModule):
         #     targets=y.long(),
         # )
 
-    def on_train_epoch_end(self) -> None:
-
-        self.log(
-            "contrastive_loss_mean",
-            torch.stack(self.training_step_contrastive_loss).mean(),
-            prog_bar=True, 
-            logger=True
-        )
-        self.training_step_contrastive_loss.clear()
-        
-        self.log(
-            "mean_task_loss_mean",
-            torch.stack(self.training_step_outputs_task_loss).mean(),
-            prog_bar=True, 
-            logger=True
-        )
-        self.training_step_outputs_task_loss.clear()
-        
-        self.log(
-            "train_loss_mean", 
-            torch.stack(self.training_step_outputs_total_loss).mean(),
-            prog_bar=True, 
-            logger=True
-        )
-        self.training_step_outputs_total_loss.clear()
+    def on_train_batch_end(self, outputs, batch, batch_idx) -> None:
+        if self.trainer.is_last_batch:
+            self.log(
+                "contrastive_loss_mean",
+                torch.stack(self.training_step_contrastive_loss).mean(),
+                on_step=False, 
+                on_epoch=True, 
+                prog_bar=True,
+            )
+            self.training_step_contrastive_loss.clear()
+            
+            self.log(
+                "task_loss_mean",
+                torch.stack(self.training_step_outputs_task_loss).mean(),
+                on_step=False, 
+                on_epoch=True, 
+                prog_bar=True,
+            )
+            self.training_step_outputs_task_loss.clear()
+            
+            self.log(
+                "total_loss_mean",
+                torch.stack(self.training_step_outputs_total_loss).mean(),
+                on_step=False, 
+                on_epoch=True, 
+                prog_bar=True,
+            )
+            self.training_step_outputs_total_loss.clear()
 
     def on_validation_epoch_end(self) -> None:
         pass

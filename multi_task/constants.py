@@ -56,9 +56,8 @@ TIME_FEAT_DIM = 5
 TARGET_FEAT_DIM = 2
 USER_STAT_FEAT_DIM = (
     39      # other
-    + 34    # price_prop
-    # + 206   # category_prop
-    # + 306   # sku_prop
+    + 81    # price_prop
+    # + 304 * 3 # target_prop
 )
 ITEM_STAT_FEAT_DIM = 15
 
