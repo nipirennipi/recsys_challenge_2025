@@ -27,6 +27,21 @@ def load_events(data_dir: DataDir, event_type: EventTypes) -> pd.DataFrame:
     return event_df
 
 
+def load_item_features(data_dir: DataDir) -> pd.DataFrame:
+    logger.info("Loading item statistic features")
+    item_features = pd.read_parquet(data_dir.item_features_file)
+    item_features = item_features.set_index(['sku', 'date'])
+
+    return item_features
+
+
+def load_cate_features(data_dir: DataDir) -> pd.DataFrame:
+    logger.info("Loading category statistic features")
+    cate_features = pd.read_parquet(data_dir.cate_features_file)
+
+    return cate_features
+
+
 def create_features(
     data_dir: DataDir, 
     target_dir: DataDir, 
@@ -53,18 +68,64 @@ def create_features(
         temp = client_ids.merge(temp, on="client_id", how="left").fillna(MAX_TIME_SPAN)
         user_first_last.append(temp)
     
-    # Time features: Purchase interval statistics
-    logger.info("Calculating purchase interval statistics")
-    buy_df = events["product_buy"].copy()
-    buy_df["timestamp"] = pd.to_datetime(buy_df["timestamp"])
-    buy_df = buy_df.sort_values(["client_id", "timestamp"])
-    buy_df["time_diff"] = buy_df.groupby("client_id")["timestamp"].diff().dt.days
-    time_diff_stats = buy_df.groupby("client_id")["time_diff"].agg(
-        ["mean", "median", "max", "min"]
-    ).reset_index().fillna(MAX_TIME_SPAN)
-    time_diff_stats.columns = ["client_id", "buy_time_diff_mean", "buy_time_diff_median", 
-                               "buy_time_diff_max", "buy_time_diff_min"]
-    time_diff_stats = client_ids.merge(time_diff_stats, on="client_id", how="left").fillna(MAX_TIME_SPAN)
+    # Time features: Interaction interval statistics
+    logger.info("Calculating interaction interval statistics")
+    time_diff_stats = []
+    for event_type in ["product_buy", "add_to_cart", "remove_from_cart"]:
+        event_df = events[event_type].copy()
+        event_df["timestamp"] = pd.to_datetime(event_df["timestamp"])
+        event_df = event_df.sort_values(["client_id", "timestamp"])
+        event_df["time_diff"] = event_df.groupby("client_id")["timestamp"].diff().dt.days
+        stats = event_df.groupby("client_id")["time_diff"].agg(
+            ["mean", "median", "max", "min"]
+        ).reset_index().fillna(MAX_TIME_SPAN)
+        stats.columns = ["client_id", f"{event_type}_time_diff_mean", f"{event_type}_time_diff_median", 
+                         f"{event_type}_time_diff_max", f"{event_type}_time_diff_min"]
+        stats = client_ids.merge(stats, on="client_id", how="left").fillna(MAX_TIME_SPAN)
+        time_diff_stats.append(stats)
+
+    # # Time features: total active days, weeks, months
+    # logger.info("Calculating total active days, weeks, months")
+    # temp_df = all_events[["client_id", "timestamp"]].copy()
+    # temp_df['day'] = temp_df['timestamp'].dt.date
+    # temp_df['week'] = temp_df['timestamp'].dt.to_period('W')
+    # temp_df['month'] = temp_df['timestamp'].dt.to_period('M')
+    # active_time = temp_df.groupby('client_id').agg(
+    #     total_active_days=('day', 'nunique'),
+    #     total_active_weeks=('week', 'nunique'),
+    #     total_active_months=('month', 'nunique')
+    # ).reset_index()
+    # user_active_time = client_ids.merge(active_time, on="client_id", how="left").fillna(0)
+
+    # # Trend features: ratio of recent activity to previous activity
+    # logger.info("Calculating activity trend features")
+    # activity_trends = []
+    # for event_name, event_df in events.items():
+    #     temp = event_df[["client_id", "timestamp"]].copy()
+    #     temp["timestamp"] = pd.to_datetime(temp["timestamp"])
+        
+    #     # Define masks for recent and previous periods
+    #     recent_mask = (END_TIME - temp["timestamp"]).dt.days <= 30
+    #     previous_mask = ((END_TIME - temp["timestamp"]).dt.days > 30) & ((END_TIME - temp["timestamp"]).dt.days <= 60)
+        
+    #     # Calculate counts for recent and previous periods
+    #     recent_counts = temp[recent_mask].groupby("client_id").size().reset_index(name=f"{event_name}_recent_count")
+    #     previous_counts = temp[previous_mask].groupby("client_id").size().reset_index(name=f"{event_name}_previous_count")
+        
+    #     # Merge counts and calculate ratio
+    #     trend_df = pd.merge(recent_counts, previous_counts, on="client_id", how="outer").fillna(0)
+    #     trend_df[f"{event_name}_activity_trend_ratio"] = (
+    #         trend_df[f"{event_name}_recent_count"] / trend_df[f"{event_name}_previous_count"]
+    #     ).replace([np.nan], 0).replace([np.inf], 999)
+    #     trend_df[f"{event_name}_activity_trend_diff"] = (
+    #         trend_df[f"{event_name}_recent_count"] - trend_df[f"{event_name}_previous_count"]
+    #     )
+    #     trend_df.drop(
+    #         columns=[f"{event_name}_recent_count", f"{event_name}_previous_count"], 
+    #         inplace=True
+    #     )
+    #     trend_df = client_ids.merge(trend_df, on="client_id", how="left").fillna(0)
+    #     activity_trends.append(trend_df)
 
     # Statistical features: event counts in time windows    
     logger.info("Calculating event counts in time windows")
@@ -88,28 +149,23 @@ def create_features(
         events, client_ids, END_TIME, properties_dict
     )
     
-    # # Statistical features: category propensity
-    # logger.info("Calculating category propensity features")
-    # category_targets = load_propensity_targets(
-    #     target_dir, PropensityTasks.PROPENSITY_CATEGORY
+    # # Statistical features: user's preference for item popularity
+    # logger.info("Calculating summary stats of interacted item popularities")
+    # item_features = load_item_features(data_dir)
+    # sku_pop_stats = create_sku_popularity_propensity_features(
+    #     events, client_ids, item_features
     # )
-    # category_stats = create_category_propensity_features(
-    #     events, client_ids, END_TIME, properties_dict, category_targets
-    # )
-
-    # # Statistical features: sku propensity
-    # logger.info("Calculating sku propensity features")
-    # sku_targets = load_propensity_targets(
-    #     target_dir, PropensityTasks.PROPENSITY_SKU
-    # )
-    # sku_stats = create_sku_propensity_features(
-    #     events, client_ids, END_TIME, sku_targets
-    # )
+    
+    # Statistical features: difference with category average price
+    cate_features = load_cate_features(data_dir)
+    category_avg_price_diff_stats = create_category_avg_price_diff_features(
+        events, client_ids, properties_dict, cate_features
+    )
 
     logger.info("Combining all features into a single DataFrame")
     dfs = (
-        [client_ids] + user_first_last + [time_diff_stats] + 
-        events_window_count + price_stats
+        [client_ids] + user_first_last + time_diff_stats + 
+        events_window_count + price_stats + [category_avg_price_diff_stats]
     )
     logger.info(f"Number of feature DataFrames: {len(dfs)}")
     features = reduce(lambda left, right: left.merge(right, on="client_id", how="left"), dfs)
@@ -142,6 +198,149 @@ def load_propensity_targets(
         allow_pickle=True,
     )
     return propensity_targets
+
+
+def create_category_avg_price_diff_features(
+    events: Dict[str, pd.DataFrame],
+    client_ids: pd.DataFrame,
+    properties_dict: Dict[int, Dict[str, any]],
+    cate_features: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Calculates the user's "premium/bargain" preference relative to the average price of categories.
+
+    For each user interaction, it computes the difference between the item's price and the global
+    average price of its category. Then, it aggregates these differences (mean, std, etc.) for each user.
+    """
+    feature_dfs_to_merge = [client_ids.copy()]
+
+    if 'category' in cate_features.columns:
+        cate_features = cate_features.set_index('category')
+
+    props_df = pd.DataFrame.from_dict(properties_dict, orient='index')[['category', 'price']]
+
+    for event_type in ["product_buy", "add_to_cart", "remove_from_cart"]:
+        if event_type not in events or events[event_type].empty:
+            continue
+
+        event_df = events[event_type][['client_id', 'sku']].copy()
+        events_with_props = pd.merge(event_df, props_df, left_on='sku', right_index=True, how='left')
+
+        events_with_global_price = pd.merge(
+            events_with_props,
+            cate_features[['avg_price_per_category']],
+            left_on='category',
+            right_index=True,
+            how='left'
+        )
+
+        events_with_global_price.dropna(subset=['price', 'avg_price_per_category'], inplace=True)
+        if events_with_global_price.empty:
+            continue
+        events_with_global_price['price_diff'] = (
+            events_with_global_price['price'] - events_with_global_price['avg_price_per_category']
+        )
+
+        user_stats = events_with_global_price.groupby('client_id')['price_diff'].agg(
+            ['mean', 'std', 'min', 'max', 'median']
+        ).reset_index()
+
+        stat_cols = {
+            'mean': f'{event_type}_category_avg_price_diff_mean',
+            'std': f'{event_type}_category_avg_price_diff_std',
+            'min': f'{event_type}_category_avg_price_diff_min',
+            'max': f'{event_type}_category_avg_price_diff_max',
+            'median': f'{event_type}_category_avg_price_diff_median'
+        }
+        user_stats.rename(columns=stat_cols, inplace=True)
+        user_stats[f'{event_type}_category_avg_price_diff_std'] = \
+            user_stats[f'{event_type}_category_avg_price_diff_std'].fillna(0)
+        feature_dfs_to_merge.append(user_stats)
+
+    if len(feature_dfs_to_merge) == 1:
+        return client_ids.copy()
+        
+    final_features = reduce(
+        lambda left, right: pd.merge(left, right, on='client_id', how='left'), 
+        feature_dfs_to_merge
+    )
+    return final_features
+
+
+def create_sku_popularity_propensity_features(
+    events: Dict[str, pd.DataFrame],
+    client_ids: pd.DataFrame,
+    item_features: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Calculates summary statistics (mean, std, min, max, median) of item popularity vectors 
+    for items a user has interacted with.
+    """
+    # This list will hold the feature DataFrames for each event type.
+    sku_pop_stats = []
+    POPULARITY_METRIC_COL = 'product_buy_popularity'
+
+    # Loop through each interaction type to generate features.
+    for event_type in ["product_buy", "add_to_cart", "remove_from_cart"]:
+        if event_type not in events or events[event_type].empty:
+            sku_pop_stats.append(client_ids.copy())
+            continue
+
+        # 1. Get user interactions for the current event type.
+        event_df = events[event_type][['client_id', 'timestamp', 'sku']].copy()
+        event_df['date'] = pd.to_datetime(event_df['timestamp']).dt.floor('D')
+        
+        # 2. Point-in-Time Join to get item popularity at the time of interaction.
+        merged_df = pd.merge(
+            event_df,
+            item_features, 
+            on=['sku', 'date'],
+            how='left'
+        )
+        
+        # Drop rows where item features couldn't be found.
+        merged_df.dropna(subset=[POPULARITY_METRIC_COL], inplace=True)
+
+        if merged_df.empty:
+            sku_pop_stats.append(client_ids.copy())
+            continue
+
+        # 3. Aggregate by client_id to calculate vector statistics.
+        def agg_vector_stats(vectors: pd.Series):
+            matrix = np.stack(vectors.values)
+            # For std, if only one item, variance is 0.
+            std_dev = np.std(matrix, axis=0) if matrix.shape[0] > 1 else np.zeros_like(matrix[0])
+            
+            return pd.Series({
+                'mean': np.mean(matrix, axis=0),
+                'std': std_dev,
+                'min': np.min(matrix, axis=0),
+                'max': np.max(matrix, axis=0),
+                'median': np.median(matrix, axis=0)
+            })
+
+        # Apply the aggregation. .unstack() pivots the stats into columns.
+        user_pop_stats = merged_df.groupby('client_id')[POPULARITY_METRIC_COL].apply(agg_vector_stats).unstack()
+        user_pop_stats.columns = [f"{event_type}_sku_popularity_{col}" for col in user_pop_stats.columns]
+        
+        # Split the array columns into separate columns.
+        expanded_dfs = []
+        for col_name in user_pop_stats.columns:
+            expanded_df = pd.DataFrame(
+                user_pop_stats[col_name].tolist(),
+                index=user_pop_stats.index
+            )
+            expanded_df.columns = [f"{col_name}_{i}" for i in range(expanded_df.shape[1])]
+            expanded_dfs.append(expanded_df)
+
+        user_pop_stats = pd.concat(expanded_dfs, axis=1)
+        
+        # Merge with all client_ids to ensure every user is included.
+        final_stats_df = client_ids.merge(user_pop_stats, on="client_id", how="left")
+        sku_pop_stats.append(final_stats_df)
+        
+    sku_pop_stats = reduce(lambda left, right: left.merge(right, on='client_id', how='left'), sku_pop_stats)
+    return sku_pop_stats
 
 
 def create_sku_propensity_features(

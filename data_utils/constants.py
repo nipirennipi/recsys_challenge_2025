@@ -11,5 +11,6 @@ class EventTypes(str, Enum):
 
 PROPERTIES_FILE = "product_properties.parquet"
 ITEM_FEATURES_FILE = "item_features.parquet"
+CATE_FEATURES_FILE = "cate_features.parquet"
 
 DAYS_IN_TARGET = 14

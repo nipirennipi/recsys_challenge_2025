@@ -325,13 +325,16 @@ class AveragePooling(nn.Module):
         Returns:
             Tensor: Pooled embeddings of shape (batch_size, emb_dim).
         """
+        # Avoid division by zero
+        safe_seq_len = torch.clamp(seq_len, min=1.0).float()  
+        
         # Mask out padding positions
-        mask = torch.arange(seq_emb.size(1), device=seq_emb.device).unsqueeze(0) < seq_len.unsqueeze(1)
+        mask = torch.arange(seq_emb.size(1), device=seq_emb.device).unsqueeze(0) < safe_seq_len.unsqueeze(1)
         mask = mask.unsqueeze(-1).expand_as(seq_emb)  # Expand mask to match seq_emb shape
         masked_seq_emb = seq_emb * mask
 
         # Compute sum of embeddings and divide by sequence length
-        pooled_emb = masked_seq_emb.sum(dim=1) / seq_len.unsqueeze(-1)
+        pooled_emb = masked_seq_emb.sum(dim=1) / safe_seq_len.unsqueeze(-1)
         return pooled_emb
 
 

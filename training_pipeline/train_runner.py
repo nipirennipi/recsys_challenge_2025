@@ -97,6 +97,7 @@ def run_training(
         logger=neptune_logger,
         callbacks=RichProgressBar(leave=True),
         log_every_n_steps=5000,
+        enable_checkpointing=False,
     )
 
     trainer.fit(model=model, datamodule=data)

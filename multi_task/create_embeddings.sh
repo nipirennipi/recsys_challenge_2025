@@ -1,6 +1,6 @@
 VERSION=multi_task
 STATE=online
-DEVICE_ID=0
+DEVICE_ID=7
 EMBEDDINGS_DIR="/data/lyjiang/RecSys_Challenge_2025/submit/${VERSION}/${STATE}"
 
 mkdir -p "${EMBEDDINGS_DIR}"

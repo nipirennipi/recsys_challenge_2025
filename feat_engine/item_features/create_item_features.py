@@ -34,20 +34,25 @@ def create_features(data_dir: DataDir, num_days: List[int],) -> pd.DataFrame:
     all_data["date"] = pd.to_datetime(all_data["timestamp"]).dt.floor('D')
 
     # Aggregate daily counts for each event type
+    logger.info("Aggregating daily counts for each event type")
     daily_counts = (
         all_data.groupby(["sku", "date", "event_type"])
         .size()
         .unstack(fill_value=0)
         .rename(columns={
-            "product_buy": "daily_buys", 
-            "add_to_cart": "daily_adds", 
-            "remove_from_cart": "daily_removes"
+            "product_buy": "daily_product_buy", 
+            "add_to_cart": "daily_add_to_cart", 
+            "remove_from_cart": "daily_remove_from_cart"
         })
         .reset_index()
     )
 
     # Ensure all event columns exist
-    for col in ["daily_buys", "daily_adds", "daily_removes"]:
+    for col in [
+        "daily_product_buy", 
+        "daily_add_to_cart", 
+        "daily_remove_from_cart"
+    ]:
         if col not in daily_counts:
             daily_counts[col] = 0
 
@@ -67,21 +72,44 @@ def create_features(data_dir: DataDir, num_days: List[int],) -> pd.DataFrame:
         daily_counts,
         on=["sku", "date"],
         how="left"
-    ).fillna({"daily_buys": 0, "daily_adds": 0, "daily_removes": 0})
+    ).fillna({
+        "daily_product_buy": 0, 
+        "daily_add_to_cart": 0, 
+        "daily_remove_from_cart": 0
+    })
 
     # Sort by date for rolling window calculations
     full_data = full_data.sort_values(["sku", "date"])
 
-    # Calculate cumulative sums
-    cumulative_cols = ["cumulative_buys", "cumulative_adds", "cumulative_removes"]
-    for col, daily_col in zip(cumulative_cols, ["daily_buys", "daily_adds", "daily_removes"]):
+    # Calculate cumulative sums        
+    logger.info("Calculating cumulative sums for daily events")
+    for col, daily_col in zip(
+        [
+            "product_buy_popularity_all", 
+            "add_to_cart_popularity_all", 
+            "remove_from_cart_popularity_all"
+        ], 
+        [
+            "daily_product_buy", 
+            "daily_add_to_cart", 
+            "daily_remove_from_cart"
+        ]
+    ):
         full_data[col] = full_data.groupby("sku")[daily_col].cumsum()
 
     # Calculate rolling window features
-    rolling_features = []
+    logger.info("Calculating rolling window features")
+    product_buy_popularity_cols = ["product_buy_popularity_all"]
+    add_to_cart_popularity_cols = ["add_to_cart_popularity_all"]
+    remove_from_cart_popularity_cols = ["remove_from_cart_popularity_all"]
+    
     for n in num_days:
-        for event in ["buys", "adds", "removes"]:
-            col_name = f"{n}d_{event}"
+        for event, cols in [
+            ("product_buy", product_buy_popularity_cols),
+            ("add_to_cart", add_to_cart_popularity_cols),
+            ("remove_from_cart", remove_from_cart_popularity_cols),
+        ]:
+            col_name = f"{event}_popularity_{n}d"
             rolling_col = f"daily_{event}"
             full_data[col_name] = (
                 full_data.groupby("sku")[rolling_col]
@@ -90,14 +118,34 @@ def create_features(data_dir: DataDir, num_days: List[int],) -> pd.DataFrame:
                 .astype(int)
                 .reset_index(drop=True)
             )
-            rolling_features.append(col_name)
+            cols.append(col_name)
 
-    # Generate feature vectors
-    feature_columns = rolling_features + cumulative_cols
-    full_data["features"] = full_data[feature_columns].values.tolist()
-    full_data["features"] = full_data["features"].apply(lambda x: np.array(x, dtype=np.int32))
+    # Generate feature vectors for product_buy_popularity
+    logger.info("Generating feature vectors for product_buy_popularity")
+    full_data["product_buy_popularity"] = full_data[product_buy_popularity_cols].values.tolist()
+    full_data["product_buy_popularity"] = full_data["product_buy_popularity"].apply(
+        lambda x: np.array(x, dtype=np.int32)
+    )
+    # Generate feature vectors for add_to_cart_popularity
+    logger.info("Generating feature vectors for add_to_cart_popularity")
+    full_data["add_to_cart_popularity"] = full_data[add_to_cart_popularity_cols].values.tolist()
+    full_data["add_to_cart_popularity"] = full_data["add_to_cart_popularity"].apply(
+        lambda x: np.array(x, dtype=np.int32)
+    )
+    # Generate feature vectors for remove_from_cart_popularity
+    logger.info("Generating feature vectors for remove_from_cart_popularity")
+    full_data["remove_from_cart_popularity"] = full_data[remove_from_cart_popularity_cols].values.tolist()
+    full_data["remove_from_cart_popularity"] = full_data["remove_from_cart_popularity"].apply(
+        lambda x: np.array(x, dtype=np.int32)
+    )
 
-    return full_data[["sku", "date", "features"]]
+    return full_data[[
+        "sku", 
+        "date", 
+        "product_buy_popularity", 
+        "add_to_cart_popularity", 
+        "remove_from_cart_popularity"
+    ]]
 
 
 def save_features(features_dir: Path, features: pd.DataFrame) -> None:

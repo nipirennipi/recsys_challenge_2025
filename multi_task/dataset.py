@@ -144,16 +144,41 @@ class BehavioralDataset(Dataset):
             elif any(key in col for key in [
                 "_count_", "_price_tier_", "_unique_price_tiers", "_unique_categories",
                 "_target_sku_count_", "_unique_target_sku",
+                "total_active_days", "_activity_trend_ratio",
             ]):
                 user_features[col] = np.log1p(user_features[col], dtype=np.float32)
                 user_features[col] = min_max_scaler.fit_transform(user_features[[col]].values)
             
             # Apply min-max scaling and fillna with -1 for columns
             elif any(key in col for key in [
-                "_price_mean", "_price_median", "_price_std", "_price_max", "_price_min"
+                "_price_mean", "_price_median", "_price_std", "_price_max", "_price_min",
+                "_category_avg_price_diff_", 
             ]):
                 user_features[col] = min_max_scaler.fit_transform(user_features[[col]].values)
                 user_features[col] = user_features[col].fillna(-1).astype(np.float32)  
+
+            # Apply np.log1p, min-max scaling and fillna with -1 to columns
+            elif any(key in col for key in [
+                "_sku_popularity_mean_", "_sku_popularity_std_", "_sku_popularity_min_", 
+                "_sku_popularity_max_", "_sku_popularity_median_",
+            ]):
+                user_features[col] = np.log1p(user_features[col], dtype=np.float32)
+                user_features[col] = min_max_scaler.fit_transform(user_features[[col]].values)
+                user_features[col] = user_features[col].fillna(-1).astype(np.float32)
+        
+            # Apply symmetric np.log1p and min-max scaling to columns
+            elif any(key in col for key in [
+                "_activity_trend_diff", 
+            ]):
+                user_features[col] = np.sign(user_features[col]) * np.log1p(
+                    np.abs(user_features[col]), dtype=np.float32
+                )
+                user_features[col] = min_max_scaler.fit_transform(user_features[[col]].values)
+
+            elif any(key in col for key in [
+                "total_active_weeks", "total_active_months",
+            ]):
+                user_features[col] = min_max_scaler.fit_transform(user_features[[col]].values)
         
         # Defragmentation
         user_features = user_features.copy()
@@ -618,6 +643,40 @@ class BehavioralDataset(Dataset):
         #     logger.info(f"-" * 50)
         
         return (behavior_data, target) if not is_augmentation and self.mode == "train" else behavior_data
+
+
+def get_last_interaction_features(
+    sequence_sku_info: List[Dict],
+    target_col: str,
+):
+    if target_col == "category":
+        default_pad_value = PAD_VALUE_CATEGORY
+    elif target_col == "price":
+        default_pad_value = PAD_VALUE_PRICE
+    else:
+        raise ValueError(f"target_col must 'price' or 'category', but given '{target_col}'")
+
+    last_values = {
+        EventTypes.PRODUCT_BUY.get_index(): default_pad_value,
+        EventTypes.ADD_TO_CART.get_index(): default_pad_value,
+        EventTypes.REMOVE_FROM_CART.get_index(): default_pad_value,
+    }
+    
+    for item in sequence_sku_info:
+        event_type = item.get("event_type")
+        if event_type in last_values:
+            target_value = item.get(target_col)
+            if target_value is not None:
+                last_values[event_type] = target_value
+
+    last_interaction_features = np.array([
+        last_values[EventTypes.PRODUCT_BUY.get_index()],
+        last_values[EventTypes.ADD_TO_CART.get_index()],
+        last_values[EventTypes.REMOVE_FROM_CART.get_index()],
+    ], dtype=np.int64)
+    
+    return last_interaction_features
+
 
 def create_target_propensity_features(
         sequence_sku_info: List[Dict],

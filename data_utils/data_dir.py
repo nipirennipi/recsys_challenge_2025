@@ -2,6 +2,7 @@ from pathlib import Path
 from data_utils.constants import (
     PROPERTIES_FILE,
     ITEM_FEATURES_FILE,
+    CATE_FEATURES_FILE,
 )
 
 
@@ -31,6 +32,7 @@ class DataDir:
         self._target_dir = data_dir / "target"
         self._properties_file = data_dir / PROPERTIES_FILE
         self._item_features_file = data_dir / ITEM_FEATURES_FILE
+        self._cate_features_file = data_dir / CATE_FEATURES_FILE
 
         # self._validate_data_dir()
 
@@ -68,6 +70,13 @@ class DataDir:
         Path to item features file.
         """
         return self._item_features_file
+
+    @property
+    def cate_features_file(self) -> Path:
+        """
+        Path to category features file.
+        """
+        return self._cate_features_file
 
     def _validate_data_dir(self) -> None:
         """

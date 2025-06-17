@@ -55,9 +55,7 @@ QUERY_EMBEDDING_DIM = 16
 TIME_FEAT_DIM = 5
 TARGET_FEAT_DIM = 2
 USER_STAT_FEAT_DIM = (
-    39      # other
-    + 81    # price_prop
-    # + 304 * 3 # target_prop
+    143
 )
 ITEM_STAT_FEAT_DIM = 15
 
