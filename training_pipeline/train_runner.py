@@ -114,6 +114,7 @@ def run_tasks(
     devices: List[int] | str | int,
     score_dir: Path | None,
     disable_relevant_clients_check: bool,
+    augmentation_method_hyperparameters: List[str | float]
 ) -> None:
     """
     Function for running a task, i.e. setting up the training, and the starting the training. This method first
@@ -139,7 +140,7 @@ def run_tasks(
         disable_relevant_clients_check=disable_relevant_clients_check,
     )
     target_data = TargetData.read_from_dir(target_dir=data_dir.target_dir)
-    metrics_aggregator = MetricsAggregator()
+    metrics_aggregator = MetricsAggregator(augmentation_method_hyperparameters)
     for task in tasks:
         logger.info("Running on %s", task.value)
         logger.info("Constructing task specific data structures")

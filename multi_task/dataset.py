@@ -78,6 +78,7 @@ class BehavioralDataset(Dataset):
         item_stat_feat_dict: Dict[int, Dict[datetime, np.ndarray]],
         item_stat_feat_dim: int,
         mode: str = "train",
+        augmentation_method_hyperparameters: List[str | float] = None,
     ) -> None:
         super().__init__()
 
@@ -93,6 +94,18 @@ class BehavioralDataset(Dataset):
             dtype=np.float32
         )
         self.mode = mode
+        if augmentation_method_hyperparameters is not None:
+            self.augmentation_method_1 = augmentation_method_hyperparameters[0]
+            self.augmentation_method_2 = augmentation_method_hyperparameters[1]
+            self.mask_proportion = float(augmentation_method_hyperparameters[2])
+            self.crop_proportion  = float(augmentation_method_hyperparameters[3])
+            self.reorder_proportion = float(augmentation_method_hyperparameters[4])
+        
+            logger.info(f"augmentation_method_1: {self.augmentation_method_1}")
+            logger.info(f"augmentation_method_2: {self.augmentation_method_2}")
+            logger.info(f"mask_proportion: {self.mask_proportion}")
+            logger.info(f"crop_proportion: {self.crop_proportion}")
+            logger.info(f"reorder_proportion: {self.reorder_proportion}")
         
         self.user_features_dict: Dict[int, np.ndarray] = {}
         self.user_features_dim: int
@@ -355,9 +368,15 @@ class BehavioralDataset(Dataset):
             file_dir / f"{event_type.value}.parquet"
         )
 
-    def _augment_sequence(self, sequence: List[dict], pad_value: dict, max_length: int) -> List[dict]:
+    def _augment_sequence(
+        self, 
+        sequence: List[dict], 
+        pad_value: dict, 
+        max_length: int, 
+        method: str,
+    ) -> List[dict]:
         """
-        Augment a sequence by masking or cropping.
+        Augment a sequence by mask, crop and reorder
 
         Args:
             sequence (List[dict]): Input sequence.
@@ -370,18 +389,31 @@ class BehavioralDataset(Dataset):
         if len(sequence) <= 1:
             return sequence
 
-        if np.random.rand() < 0.5:  # Masking
-            num_mask = max(1, int(len(sequence) * 0.3))
+        if method == "mask":  # Masking
+            num_mask = max(1, int(len(sequence) * self.mask_proportion))
             mask_indices = np.random.choice(len(sequence), num_mask, replace=False)
             for idx in mask_indices:
                 timestamp = sequence[idx]["timestamp"]  # Preserve timestamp
                 sequence[idx] = pad_value.copy()
                 sequence[idx]['timestamp'] = timestamp 
-        else:  # Cropping
-            crop_len = max(1, int(len(sequence) * 0.6))
+        elif method == "crop":  # Cropping
+            crop_len = max(1, int(len(sequence) * self.crop_proportion))
             start_idx = np.random.randint(0, len(sequence) - crop_len + 1)
             sequence = sequence[start_idx:start_idx + crop_len]
-
+        elif method == "reorder":  # Reordering
+            if len(sequence) < 2:
+                return sequence
+            reorder_len = max(2, int(len(sequence) * self.reorder_proportion))
+            start_idx = np.random.randint(0, len(sequence) - reorder_len + 1)
+            sub_sequence = [event.copy() for event in sequence[start_idx : start_idx + reorder_len]]
+            original_timestamps = [event['timestamp'] for event in sub_sequence]
+            np.random.shuffle(sub_sequence)
+            for i in range(len(sub_sequence)):
+                sub_sequence[i]['timestamp'] = original_timestamps[i]
+            sequence[start_idx : start_idx + reorder_len] = sub_sequence        
+        else:
+            raise ValueError(f"Unknown augmentation method: {method}")
+        
         return sequence[-max_length:]
 
     def _generate_timestamp_features(self, sequence_entity_info: List[dict]) -> None:
@@ -425,13 +457,13 @@ class BehavioralDataset(Dataset):
         if self.mode == "train":
             return (
                 behavior_data[0],
-                self._getitem(idx, is_augmentation=True),
-                self._getitem(idx, is_augmentation=True),
+                self._getitem(idx, is_augmentation=True, augmentation_method=self.augmentation_method_1),
+                self._getitem(idx, is_augmentation=True, augmentation_method=self.augmentation_method_2),
                 behavior_data[1],  # target
             )
         return behavior_data
 
-    def _getitem(self, idx, is_augmentation=False) -> tuple[np.ndarray, np.ndarray]:
+    def _getitem(self, idx, is_augmentation=False, augmentation_method=None) -> tuple[np.ndarray, np.ndarray]:
         self._stream_behavior_sequence(idx)
         chunk_inner_idx = idx % self.chunk_size
         client_id = self.behavior_sequence_chunk[chunk_inner_idx]["client_id"]
@@ -457,9 +489,15 @@ class BehavioralDataset(Dataset):
         # self._generate_target_features(sequence_sku_info)
 
         if is_augmentation:
-            sequence_sku_info = self._augment_sequence(sequence_sku_info, PAD_SKU, MAX_SEQUENCE_LENGTH)
-            sequence_url_info = self._augment_sequence(sequence_url_info, PAD_URL, MAX_SEQUENCE_LENGTH)
-            sequence_query_info = self._augment_sequence(sequence_query_info, PAD_QUERY, MAX_SEQUENCE_LENGTH)
+            sequence_sku_info = self._augment_sequence(
+                sequence_sku_info, PAD_SKU, MAX_SEQUENCE_LENGTH, augmentation_method
+            )
+            sequence_url_info = self._augment_sequence(
+                sequence_url_info, PAD_URL, MAX_SEQUENCE_LENGTH, augmentation_method
+            )
+            sequence_query_info = self._augment_sequence(
+                sequence_query_info, PAD_QUERY, MAX_SEQUENCE_LENGTH, augmentation_method
+            )
 
         sequence_sku_length = min(len(sequence_sku_info), MAX_SEQUENCE_LENGTH)
         sequence_url_length = min(len(sequence_url_info), MAX_SEQUENCE_LENGTH)

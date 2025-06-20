@@ -1,0 +1,168 @@
+{
+    "timestamp": "2025-06-19T10:57:12.396418",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.4443509876728058,
+    "task_loss_mean": 0.020098887383937836,
+    "total_loss_mean": 0.24227438867092133
+}
+{
+    "timestamp": "2025-06-19T11:18:50.445215",
+    "best_metrics": {
+        "churn": 0.8160176277160645,
+        "propensity_category": 0.7892825186252596,
+        "propensity_sku": 0.7771710813045503
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    },
+    "hyperparameters": {
+        "aug_method_1": "mask",
+        "aug_method_2": "mask",
+        "mask_proportion": 0.2,
+        "crop_proportion": 0.9,
+        "reorder_proportion": 0.1
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-19T12:28:57.192354",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.5047367811203003,
+    "task_loss_mean": 0.019966885447502136,
+    "total_loss_mean": 0.2723352611064911
+}
+{
+    "timestamp": "2025-06-19T12:51:37.570488",
+    "best_metrics": {
+        "churn": 0.8162565231323242,
+        "propensity_category": 0.7897915184497835,
+        "propensity_sku": 0.7825713217258454
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    },
+    "hyperparameters": {
+        "aug_method_1": "mask",
+        "aug_method_2": "crop",
+        "mask_proportion": 0.2,
+        "crop_proportion": 0.9,
+        "reorder_proportion": 0.1
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-19T14:04:56.414930",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.4221719205379486,
+    "task_loss_mean": 0.020064517855644226,
+    "total_loss_mean": 0.23115049302577972
+}
+{
+    "timestamp": "2025-06-19T14:26:46.272478",
+    "best_metrics": {
+        "churn": 0.8158233165740967,
+        "propensity_category": 0.7890748798847199,
+        "propensity_sku": 0.7769452691078187
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    },
+    "hyperparameters": {
+        "aug_method_1": "mask",
+        "aug_method_2": "reorder",
+        "mask_proportion": 0.2,
+        "crop_proportion": 0.9,
+        "reorder_proportion": 0.1
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-19T15:37:20.086515",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.4558989405632019,
+    "task_loss_mean": 0.020130150020122528,
+    "total_loss_mean": 0.24807961285114288
+}
+{
+    "timestamp": "2025-06-19T15:59:16.130343",
+    "best_metrics": {
+        "churn": 0.8158328533172607,
+        "propensity_category": 0.7889562845230103,
+        "propensity_sku": 0.7821877360343934
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    },
+    "hyperparameters": {
+        "aug_method_1": "crop",
+        "aug_method_2": "crop",
+        "mask_proportion": 0.2,
+        "crop_proportion": 0.9,
+        "reorder_proportion": 0.1
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-19T17:09:59.535519",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.4515131115913391,
+    "task_loss_mean": 0.01989569328725338,
+    "total_loss_mean": 0.24565227329730988
+}
+{
+    "timestamp": "2025-06-19T17:31:49.686423",
+    "best_metrics": {
+        "churn": 0.8162192106246948,
+        "propensity_category": 0.7899916231632234,
+        "propensity_sku": 0.7768498301506043
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    },
+    "hyperparameters": {
+        "aug_method_1": "crop",
+        "aug_method_2": "reorder",
+        "mask_proportion": 0.2,
+        "crop_proportion": 0.9,
+        "reorder_proportion": 0.1
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-19T18:39:59.766165",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.3697851598262787,
+    "task_loss_mean": 0.020063528791069984,
+    "total_loss_mean": 0.20495609939098358
+}
+{
+    "timestamp": "2025-06-19T19:00:58.535883",
+    "best_metrics": {
+        "churn": 0.8159030675888062,
+        "propensity_category": 0.788716220855713,
+        "propensity_sku": 0.7763313412666322
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    },
+    "hyperparameters": {
+        "aug_method_1": "reorder",
+        "aug_method_2": "reorder",
+        "mask_proportion": 0.2,
+        "crop_proportion": 0.9,
+        "reorder_proportion": 0.1
+    }
+}
+==================================================

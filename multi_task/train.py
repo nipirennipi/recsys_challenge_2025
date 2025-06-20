@@ -108,6 +108,12 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disables relevant clients check in validator, but enables embeddings for sets of clients other than relevant clients.",
     )
+    parser.add_argument(
+        "--augmentation-method-hyperparameters",
+        nargs="*",
+        required=True,
+        help="Augmentation Method Hyperparameters. [tf1, tf2, mp, cp, rp]",
+    )
     return parser
 
 
@@ -153,6 +159,7 @@ def main(params) -> None:
         devices=parse_devices(params.devices),
         score_dir=score_dir,
         disable_relevant_clients_check=params.disable_relevant_clients_check,
+        augmentation_method_hyperparameters=params.augmentation_method_hyperparameters,
     )
 
     save_embeddings(

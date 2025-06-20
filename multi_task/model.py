@@ -1,9 +1,12 @@
 import torch
 import pytorch_lightning as pl
 import logging
+import json
 from torch import nn, optim, Tensor
 from dataclasses import asdict
 from typing import Callable, List, Tuple
+from datetime import datetime
+from pathlib import Path
 from multi_task.metric_calculators import (
     MetricCalculator,
 )
@@ -619,6 +622,7 @@ class UniversalModel(pl.LightningModule):
         # metric_calculator: MetricCalculator,
         loss_fn: List[Callable[[Tensor, Tensor], Tensor]],
         # metrics_tracker: List[MetricContainer],
+        score_dir: Path,
     ) -> None:
         super().__init__()
 
@@ -649,6 +653,7 @@ class UniversalModel(pl.LightningModule):
             for pred, target, loss_fn in zip(preds, targets, loss_fn)
         )
         # self.metrics_tracker = metrics_tracker
+        self.score_dir = score_dir 
         self.contrastive_temp = CONTRASTIVE_TEMP
         self.contrastive_lambda = CONTRASTIVE_LAMBDA
         self.nce_fct = nn.CrossEntropyLoss()
@@ -770,32 +775,49 @@ class UniversalModel(pl.LightningModule):
 
     def on_train_batch_end(self, outputs, batch, batch_idx) -> None:
         if self.trainer.is_last_batch:
+            contrastive_loss_mean = torch.stack(self.training_step_contrastive_loss).mean()
             self.log(
                 "contrastive_loss_mean",
-                torch.stack(self.training_step_contrastive_loss).mean(),
+                contrastive_loss_mean,
                 on_step=False, 
                 on_epoch=True, 
                 prog_bar=True,
             )
             self.training_step_contrastive_loss.clear()
             
+            task_loss_mean = torch.stack(self.training_step_outputs_task_loss).mean()
             self.log(
                 "task_loss_mean",
-                torch.stack(self.training_step_outputs_task_loss).mean(),
+                task_loss_mean,
                 on_step=False, 
                 on_epoch=True, 
                 prog_bar=True,
             )
             self.training_step_outputs_task_loss.clear()
             
+            total_loss_mean = torch.stack(self.training_step_outputs_total_loss).mean() 
             self.log(
                 "total_loss_mean",
-                torch.stack(self.training_step_outputs_total_loss).mean(),
+                total_loss_mean,
                 on_step=False, 
                 on_epoch=True, 
                 prog_bar=True,
             )
             self.training_step_outputs_total_loss.clear()
+            
+            if self.score_dir is not None:
+                scores_fn = self.score_dir
+                result_to_log = {
+                    "timestamp": datetime.now().isoformat(),
+                    "epoch": self.trainer.current_epoch,
+                    "contrastive_loss_mean": contrastive_loss_mean.item(),
+                    "task_loss_mean": task_loss_mean.item(),
+                    "total_loss_mean": total_loss_mean.item(),
+                }
+                
+                with open(scores_fn, "a", encoding="utf-8") as scores_file:
+                    json.dump(result_to_log, scores_file, indent=4, ensure_ascii=False)
+                    scores_file.write("\n")
 
     def on_validation_epoch_end(self) -> None:
         pass

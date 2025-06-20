@@ -53,6 +53,7 @@ class BehavioralDataModule(pl.LightningDataModule):
         batch_size: int,
         num_workers: int,
         gpu_allocator: GPUAllocator,
+        augmentation_method_hyperparameters: List[str | float],
     ) -> None:
         super().__init__()
         self.batch_size = batch_size
@@ -62,6 +63,7 @@ class BehavioralDataModule(pl.LightningDataModule):
         self.target_data = target_data
         self.target_calculators = target_calculators
         self.gpu_allocator = gpu_allocator
+        self.augmentation_method_hyperparameters = augmentation_method_hyperparameters
         
         self.properties_dict: Dict[int, Dict[str, object]] = {}
         self.item_features_dict: Dict[int, Dict[datetime, np.ndarray]] = {}
@@ -82,6 +84,7 @@ class BehavioralDataModule(pl.LightningDataModule):
                 item_stat_feat_dict=self.item_features_dict,
                 item_stat_feat_dim=self.item_features_dim,
                 mode="train",
+                augmentation_method_hyperparameters=self.augmentation_method_hyperparameters,
             )
             self.train_sampler = ChunkedShuffleSampler(
                 dataset_size=len(self.train_data),
@@ -98,6 +101,7 @@ class BehavioralDataModule(pl.LightningDataModule):
                 item_stat_feat_dict=self.item_features_dict,
                 item_stat_feat_dim=self.item_features_dim,
                 mode="validation",
+                augmentation_method_hyperparameters=None,  # No augmentation for validation
             )
             self.validation_sampler = ChunkedShuffleSampler(
                 dataset_size=len(self.validation_data),

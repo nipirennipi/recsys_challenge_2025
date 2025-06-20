@@ -10,5 +10,4 @@ python -m training_pipeline.train \
     --log-name "${VERSION}" \
     --accelerator gpu \
     --devices ${DEVICE_ID} \
-    --score-dir "./${VERSION}/score" \
     --disable-relevant-clients-check

@@ -67,7 +67,9 @@ def run_training(
     num_workers: int,
     accelerator: str,
     devices: List[int] | str | int,
+    score_dir: Path | None,
     neptune_logger: NeptuneLogger,
+    augmentation_method_hyperparameters: List[str | float],
 ) -> None:
     """
     Function for running the training of a model, with all the training
@@ -102,6 +104,7 @@ def run_training(
         batch_size=BATCH_SIZE,
         num_workers=num_workers,
         gpu_allocator=gpu_allocator,
+        augmentation_method_hyperparameters=augmentation_method_hyperparameters,
     )
 
     sku_vocab_size = id_mapper.sku_vocab_size()
@@ -129,6 +132,7 @@ def run_training(
         # metric_calculator=task_settings.metric_calculator,
         loss_fn=loss_fn,
         # metrics_tracker=task_settings.metrics_tracker,
+        score_dir=score_dir,
     )
 
     trainer = pl.Trainer(
@@ -155,6 +159,7 @@ def run_tasks(
     devices: List[int] | str | int,
     score_dir: Path | None,
     disable_relevant_clients_check: bool,
+    augmentation_method_hyperparameters: List[str | float]
 ) -> None:
     """
     Function for running a task, i.e. setting up the training, and the starting the training. This method first
@@ -200,7 +205,9 @@ def run_tasks(
         num_workers=num_workers,
         accelerator=accelerator,
         devices=devices,
+        score_dir=score_dir,
         neptune_logger=neptune_logger,
+        augmentation_method_hyperparameters=augmentation_method_hyperparameters,
     )
     neptune_logger.experiment.stop()
 
@@ -209,5 +216,5 @@ def run_tasks(
     # )
     logger.info("Run on multi_tasks completed")
 
-    if score_dir:
-        metrics_aggregator.save(score_dir=score_dir)
+    # if score_dir:
+    #     metrics_aggregator.save(score_dir=score_dir)

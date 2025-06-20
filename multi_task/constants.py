@@ -123,3 +123,11 @@ DEEP_HIDDEN_DIMS = [EMBEDDING_DIM * 2, EMBEDDING_DIM * 2, EMBEDDING_DIM]
 CONTRASTIVE_TEMP = 0.1  # Temperature for contrastive loss
 CONTRASTIVE_LAMBDA = 0.5  # Weight for contrastive loss
 MLP_PROJECTION_DIM = 128  # Dimension of the MLP projection head
+
+# # Augmentation Method Hyperparameters
+# AUGMENTATION_METHOD_1 = "mask"  # mask, crop and reorder
+# AUGMENTATION_METHOD_2 = "crop"
+
+# MASK_PROPORTION = 0.3 # Proportion of items to mask in the sequence
+# CROP_PROPORTION = 0.6  # Proportion of items to crop in the sequence
+# REORDER_PROPORTION = 0.5  # Proportion of items to reorder in the sequence
