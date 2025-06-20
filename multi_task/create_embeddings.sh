@@ -20,4 +20,5 @@ python -m multi_task.train \
     --accelerator gpu \
     --devices ${DEVICE_ID} \
     --augmentation-method-hyperparameters "${AUGMENTATION_METHOD_1}" "${AUGMENTATION_METHOD_2}" "${MASK_PROPORTION}" "${CROP_PROPORTION}" "${REORDER_PROPORTION}" \
+    --is-online True \
     --disable-relevant-clients-check

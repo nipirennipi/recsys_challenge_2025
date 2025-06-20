@@ -114,6 +114,12 @@ def get_parser() -> argparse.ArgumentParser:
         required=True,
         help="Augmentation Method Hyperparameters. [tf1, tf2, mp, cp, rp]",
     )
+    parser.add_argument(
+        "--is-online",
+        default=False,
+        type=bool,
+        help="Whether the training is online or offline. If online, the model will be trained on the latest data.",
+    )
     return parser
 
 
@@ -160,6 +166,7 @@ def main(params) -> None:
         score_dir=score_dir,
         disable_relevant_clients_check=params.disable_relevant_clients_check,
         augmentation_method_hyperparameters=params.augmentation_method_hyperparameters,
+        is_online=params.is_online,
     )
 
     save_embeddings(

@@ -159,7 +159,8 @@ def run_tasks(
     devices: List[int] | str | int,
     score_dir: Path | None,
     disable_relevant_clients_check: bool,
-    augmentation_method_hyperparameters: List[str | float]
+    augmentation_method_hyperparameters: List[str | float],
+    is_online: bool = False,
 ) -> None:
     """
     Function for running a task, i.e. setting up the training, and the starting the training. This method first
@@ -178,7 +179,10 @@ def run_tasks(
         score_dir (Path | None): Path where results are saved in an easy-to-read format, parallel to netune logging.
         disable_relevant_clients_check (bool): disables validator check for relevant clients
     """
-    target_data = TargetData.read_from_dir(target_dir=data_dir.target_dir)
+    target_data = TargetData.read_from_dir(
+        target_dir=data_dir.target_dir, 
+        is_online=is_online
+    ) 
     metrics_aggregator = MetricsAggregator()
     logger.info("Running on multi_tasks")
 
