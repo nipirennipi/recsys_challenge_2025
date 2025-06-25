@@ -26,7 +26,6 @@ For each event in a user's sequence, we create a rich representation based on th
     - This vector includes the item's interaction counts (purchases, add-to-carts, removals) over various sliding windows (3, 7, 30, 60 days) and in total (cumulative), all `log1p` transformed. This provides the sequence model with dynamic information about an item's trend and popularity at the exact moment of user interaction, avoiding any data leakage from the future.
 - **Temporal Features:**
     - **Cyclical Time:** The hour of the day and day of the week are encoded using sine/cosine transformations. A binary `is_weekend` flag is also included.
-    - **Time Decay:** A recency weight, w_i=f(textEND_TIME−t_i), is calculated for each event and included as an input feature to explicitly inform the model about the event's freshness.
 - **Target-Awareness Features:**
     - A binary flag indicating whether the item in the sequence belongs to the set of 100 target SKUs/categories is included.
 
