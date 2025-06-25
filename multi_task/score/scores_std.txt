@@ -537,3 +537,239 @@
     }
 }
 ==================================================
+{
+    "timestamp": "2025-06-25T15:32:36.811143",
+    "epoch": 0,
+    "contrastive_loss_mean": 1.0382646322250366,
+    "task_loss_mean": 0.2440997064113617,
+    "total_loss_mean": 0.7632319331169128
+}
+{
+    "timestamp": "2025-06-25T15:37:27.782228",
+    "epoch": 1,
+    "contrastive_loss_mean": 0.36541813611984253,
+    "task_loss_mean": 0.17700344324111938,
+    "total_loss_mean": 0.35971248149871826
+}
+{
+    "timestamp": "2025-06-25T15:42:19.325339",
+    "epoch": 2,
+    "contrastive_loss_mean": 0.32431668043136597,
+    "task_loss_mean": 0.17625223100185394,
+    "total_loss_mean": 0.33841055631637573
+}
+{
+    "timestamp": "2025-06-25T15:47:13.407837",
+    "epoch": 3,
+    "contrastive_loss_mean": 0.3068409264087677,
+    "task_loss_mean": 0.17533469200134277,
+    "total_loss_mean": 0.32875514030456543
+}
+{
+    "timestamp": "2025-06-25T15:48:48.996806",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.8522892594337463,
+    "total_loss_mean": 0.8522892594337463
+}
+{
+    "timestamp": "2025-06-25T15:52:06.917982",
+    "epoch": 4,
+    "contrastive_loss_mean": 0.2981153726577759,
+    "task_loss_mean": 0.17385321855545044,
+    "total_loss_mean": 0.3229109048843384
+}
+{
+    "timestamp": "2025-06-25T15:54:10.167317",
+    "epoch": 1,
+    "contrastive_loss_mean": 0.33861032128334045,
+    "total_loss_mean": 0.33861032128334045
+}
+{
+    "timestamp": "2025-06-25T15:57:00.231091",
+    "epoch": 5,
+    "contrastive_loss_mean": 0.29363957047462463,
+    "task_loss_mean": 0.16931506991386414,
+    "total_loss_mean": 0.31613489985466003
+}
+{
+    "timestamp": "2025-06-25T15:59:30.747442",
+    "epoch": 2,
+    "contrastive_loss_mean": 0.30737099051475525,
+    "total_loss_mean": 0.30737099051475525
+}
+{
+    "timestamp": "2025-06-25T16:02:01.524129",
+    "epoch": 6,
+    "contrastive_loss_mean": 0.29154595732688904,
+    "task_loss_mean": 0.1581476777791977,
+    "total_loss_mean": 0.3039206564426422
+}
+{
+    "timestamp": "2025-06-25T16:06:53.164737",
+    "epoch": 7,
+    "contrastive_loss_mean": 0.2899307906627655,
+    "task_loss_mean": 0.1396724134683609,
+    "total_loss_mean": 0.28463783860206604
+}
+{
+    "timestamp": "2025-06-25T16:11:50.081170",
+    "epoch": 8,
+    "contrastive_loss_mean": 0.2881586253643036,
+    "task_loss_mean": 0.11880652606487274,
+    "total_loss_mean": 0.2628858685493469
+}
+{
+    "timestamp": "2025-06-25T16:16:56.264045",
+    "epoch": 9,
+    "contrastive_loss_mean": 0.28696054220199585,
+    "task_loss_mean": 0.10130851715803146,
+    "total_loss_mean": 0.2447887659072876
+}
+{
+    "timestamp": "2025-06-25T16:20:01.019150",
+    "epoch": 0,
+    "contrastive_loss_mean": 0.8522892594337463,
+    "total_loss_mean": 0.8522892594337463
+}
+{
+    "timestamp": "2025-06-25T16:21:42.069699",
+    "best_metrics": {
+        "churn": 0.8089069724082947,
+        "propensity_category": 0.7751476466655731,
+        "propensity_sku": 0.7584233522415161
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-25T16:25:45.555690",
+    "epoch": 1,
+    "contrastive_loss_mean": 0.33861032128334045,
+    "total_loss_mean": 0.33861032128334045
+}
+{
+    "timestamp": "2025-06-25T16:31:28.681618",
+    "epoch": 2,
+    "contrastive_loss_mean": 0.30737099051475525,
+    "total_loss_mean": 0.30737099051475525
+}
+{
+    "timestamp": "2025-06-25T16:36:56.671805",
+    "epoch": 3,
+    "contrastive_loss_mean": 0.29428157210350037,
+    "total_loss_mean": 0.29428157210350037
+}
+{
+    "timestamp": "2025-06-25T16:39:42.170964",
+    "best_metrics": {
+        "churn": 0.8107941150665283,
+        "propensity_category": 0.7814713418483735,
+        "propensity_sku": 0.7562025725841524
+    },
+    "best_epochs": {
+        "churn": 2,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-25T16:42:22.797350",
+    "epoch": 4,
+    "contrastive_loss_mean": 0.28798559308052063,
+    "total_loss_mean": 0.28798559308052063
+}
+{
+    "timestamp": "2025-06-25T16:47:56.866306",
+    "epoch": 5,
+    "contrastive_loss_mean": 0.2833835184574127,
+    "total_loss_mean": 0.2833835184574127
+}
+{
+    "timestamp": "2025-06-25T16:52:37.734378",
+    "epoch": 0,
+    "contrastive_loss_mean": 1.0382646322250366,
+    "task_loss_mean": 0.2440997064113617,
+    "total_loss_mean": 0.7632319331169128
+}
+{
+    "timestamp": "2025-06-25T16:59:25.556232",
+    "epoch": 0,
+    "contrastive_loss_mean": 2.813014268875122,
+    "task_loss_mean": 0.26976320147514343,
+    "total_loss_mean": 1.6762702465057373
+}
+{
+    "timestamp": "2025-06-25T17:08:46.371700",
+    "epoch": 0,
+    "contrastive_loss_mean": 8.314337730407715,
+    "task_loss_mean": 0.2653011083602905,
+    "total_loss_mean": 4.422469615936279
+}
+{
+    "timestamp": "2025-06-25T17:15:14.739777",
+    "best_metrics": {
+        "churn": 0.8098975419998169,
+        "propensity_category": 0.7765285968780518,
+        "propensity_sku": 0.7545528709888459
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-25T17:19:13.313058",
+    "best_metrics": {
+        "churn": 0.814669668674469,
+        "propensity_category": 0.7860221385955812,
+        "propensity_sku": 0.7809349834918976
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-25T17:24:52.940127",
+    "best_metrics": {
+        "churn": 0.7939252853393555,
+        "propensity_category": 0.7632512748241425,
+        "propensity_sku": 0.7529337584972382
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    }
+}
+==================================================
+{
+    "timestamp": "2025-06-25T17:24:54.506475",
+    "epoch": 0,
+    "contrastive_loss_mean": 1.0579594373703003,
+    "task_loss_mean": 0.2696267068386078,
+    "total_loss_mean": 0.7986063957214355
+}
+{
+    "timestamp": "2025-06-25T17:47:57.609379",
+    "best_metrics": {
+        "churn": 0.8148635625839233,
+        "propensity_category": 0.7879271984100341,
+        "propensity_sku": 0.784487944841385
+    },
+    "best_epochs": {
+        "churn": 3,
+        "propensity_category": 3,
+        "propensity_sku": 3
+    }
+}
+==================================================
