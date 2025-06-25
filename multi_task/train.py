@@ -111,7 +111,6 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--augmentation-method-hyperparameters",
         nargs="*",
-        required=True,
         help="Augmentation Method Hyperparameters. [tf1, tf2, mp, cp, rp]",
     )
     parser.add_argument(

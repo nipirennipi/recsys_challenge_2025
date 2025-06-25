@@ -37,7 +37,7 @@ GROUP_SIZE = 100    # DO NOT CHANGE THIS VALUE
 HIDDEN_SIZE_THIN = 2048
 HIDDEN_SIZE_WIDE = 4096
 LEARNING_RATE = 0.001
-MAX_EPOCH = 1
+MAX_EPOCH = 10
 MAX_EMBEDDING_DIM = 2048
 MAX_SEQUENCE_LENGTH = 50
 
@@ -124,10 +124,12 @@ CONTRASTIVE_TEMP = 0.1  # Temperature for contrastive loss
 CONTRASTIVE_LAMBDA = 0.5  # Weight for contrastive loss
 MLP_PROJECTION_DIM = 128  # Dimension of the MLP projection head
 
-# # Augmentation Method Hyperparameters
-# AUGMENTATION_METHOD_1 = "mask"  # mask, crop and reorder
-# AUGMENTATION_METHOD_2 = "crop"
+# Augmentation Method Hyperparameters
+AUGMENTATION_METHOD_1 = "mask"  # mask, crop and reorder
+AUGMENTATION_METHOD_2 = "reorder"
+MASK_PROPORTION = 0.3 # Proportion of items to mask in the sequence
+CROP_PROPORTION = 0.8  # Proportion of items to crop in the sequence
+REORDER_PROPORTION = 0.3  # Proportion of items to reorder in the sequence
 
-# MASK_PROPORTION = 0.3 # Proportion of items to mask in the sequence
-# CROP_PROPORTION = 0.6  # Proportion of items to crop in the sequence
-# REORDER_PROPORTION = 0.5  # Proportion of items to reorder in the sequence
+# USER_FEATURE_AUGMENTATION_METHOD = "mask"
+# USER_FEATURE_MASK_PROPORTION = 0.3  # Proportion of user features to mask

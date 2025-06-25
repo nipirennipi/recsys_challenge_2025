@@ -25,5 +25,8 @@ class TargetData:
         else:
             train_df = pd.read_parquet(target_dir / "train_target.parquet")
             logger.info("Reading offline target data")
+        logger.info(f"train data shape: {train_df.shape}")
+        train_target_timestamp_range = (train_df['timestamp'].min(), train_df['timestamp'].max())
+        print("target data timestamp range:", train_target_timestamp_range)
         relevant_df = pd.read_parquet(target_dir / "relevant_target.parquet")
         return cls(train_df, relevant_df)

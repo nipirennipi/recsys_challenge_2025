@@ -57,6 +57,25 @@ def create_features(
     MAX_TIME_SPAN = (END_TIME - START_TIME).days
     client_ids = pd.DataFrame({"client_id": all_events["client_id"].unique()})
     
+    # Statistical features: sku propensity
+    logger.info("Calculating sku propensity features")
+    sku_targets = load_propensity_targets(
+        target_dir, PropensityTasks.PROPENSITY_SKU
+    )
+    sku_stats = create_sku_propensity_features(
+        events, client_ids, END_TIME, sku_targets
+    )
+
+    # Statistical features: category propensity
+    logger.info("Calculating category propensity features")
+    properties_dict = load_properties_dict(data_dir)
+    category_targets = load_propensity_targets(
+        target_dir, PropensityTasks.PROPENSITY_CATEGORY
+    )
+    category_stats = create_category_propensity_features(
+        events, client_ids, END_TIME, properties_dict, category_targets
+    )
+    
     # Time features: days since first/last interaction for each event type
     logger.info("Calculating days since first/last interaction for each event type")
     user_first_last = []
@@ -157,6 +176,7 @@ def create_features(
     # )
     
     # Statistical features: difference with category average price
+    logger.info("Calculating category average price difference features")
     cate_features = load_cate_features(data_dir)
     category_avg_price_diff_stats = create_category_avg_price_diff_features(
         events, client_ids, properties_dict, cate_features
@@ -164,7 +184,7 @@ def create_features(
 
     logger.info("Combining all features into a single DataFrame")
     dfs = (
-        [client_ids] + user_first_last + time_diff_stats + 
+        [client_ids] + sku_stats + category_stats + user_first_last + time_diff_stats + 
         events_window_count + price_stats + [category_avg_price_diff_stats]
     )
     logger.info(f"Number of feature DataFrames: {len(dfs)}")
@@ -356,24 +376,17 @@ def create_sku_propensity_features(
         target_df = df[df["sku"].isin(sku_targets)]
         
         # 1. SKU Statistics
-        for time_window in ["all"]:
-            if time_window == "30d":
+        for time_window in ["7d", "30d", "all"]:
+            if time_window == "7d":
+                target_window_df = target_df[target_df["timestamp"] >= (end_time - pd.Timedelta(days=7))]
+            elif time_window == "30d":
                 target_window_df = target_df[target_df["timestamp"] >= (end_time - pd.Timedelta(days=30))]
             else:
                 target_window_df = target_df
-            
-            sku_counts = target_window_df.groupby(
-                ["client_id", "sku"]
-            ).size().unstack(fill_value=0)
-            
-            for sku_id in sku_targets:
-                if sku_id not in sku_counts.columns:
-                    sku_counts[sku_id] = 0
-            
-            sku_counts.columns = [
-                f"{event_type}_target_sku_count_{col}_{time_window}" for col in sku_counts.columns
-            ]
-            sku_counts = sku_counts.reset_index()
+
+            sku_counts = target_window_df.groupby("client_id").size().reset_index(
+                name=f"{event_type}_target_sku_count_{time_window}"
+            )
             sku_counts = client_ids.merge(sku_counts, on="client_id", how="left").fillna(0)
             sku_stats.append(sku_counts)
         
@@ -411,48 +424,33 @@ def create_category_propensity_features(
 ) -> List:
     category_stats = []
 
-    for event_type in ["product_buy", "add_to_cart"]:
+    for event_type in ["product_buy", "add_to_cart", "remove_from_cart"]:
         df = events[event_type].copy()
         df["category"] = df["sku"].map(lambda sku: properties_dict[sku]["category"])
         target_df = df[df["category"].isin(category_targets)]
         
         # 1. Category Statistics
-        for time_window in ["all"]:
-            if time_window == "30d":
+        for time_window in ["7d", "30d", "all"]:
+            if time_window == "7d":
+                target_window_df = target_df[target_df["timestamp"] >= (end_time - pd.Timedelta(days=7))]
+            elif time_window == "30d":
                 target_window_df = target_df[target_df["timestamp"] >= (end_time - pd.Timedelta(days=30))]
             else:
                 target_window_df = target_df
             
-            category_counts = target_window_df.groupby(
-                ["client_id", "category"]
-            ).size().unstack(fill_value=0)
-            
-            for cat_id in category_targets:
-                if cat_id not in category_counts.columns:
-                    category_counts[cat_id] = 0
-            
-            category_counts.columns = [
-                f"{event_type}_category_count_{col}_{time_window}" for col in category_counts.columns
-            ]
-            category_counts = category_counts.reset_index()
+            category_counts = target_window_df.groupby("client_id").size().reset_index(
+                name=f"{event_type}_target_category_count_{time_window}"
+            )
             category_counts = client_ids.merge(category_counts, on="client_id", how="left").fillna(0)
             category_stats.append(category_counts)
         
-        # 2. Category Diversity
-        category_distribution = (
-            target_df.groupby(["client_id", "category"]).size()
-            .groupby("client_id")
-            .apply(lambda x: entropy(x / x.sum(), base=2) if x.sum() > 0 else 0)
-            .reset_index(name=f"{event_type}_category_entropy")
-        )
-        
-        unique_categories = (
+        # 2. Category Diversity    
+        unique_category = (
             target_df.groupby("client_id")["category"].nunique().
-            reset_index(name=f"{event_type}_unique_categories")
+            reset_index(name=f"{event_type}_unique_target_categories")
         )
         
-        diversity_df = pd.merge(category_distribution, unique_categories, on="client_id", how="outer").fillna(0)
-        diversity_df = client_ids.merge(diversity_df, on="client_id", how="left").fillna(0)
+        diversity_df = client_ids.merge(unique_category, on="client_id", how="left").fillna(0)
         category_stats.append(diversity_df)
 
         # 3. Target Category Proportion

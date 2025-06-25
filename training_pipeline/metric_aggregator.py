@@ -61,28 +61,28 @@ class MetricsAggregator:
         self._find_best_weighted_metrics_and_epochs()
         scores_fn = score_dir
         
-        hyperparameters = {
-            "aug_method_1": self.augmentation_method_hyperparameters[0],
-            "aug_method_2": self.augmentation_method_hyperparameters[1],
-            "mask_proportion": float(self.augmentation_method_hyperparameters[2]),
-            "crop_proportion": float(self.augmentation_method_hyperparameters[3]),
-            "reorder_proportion": float(self.augmentation_method_hyperparameters[4]),
-        }
+        # hyperparameters = {
+        #     "aug_method_1": self.augmentation_method_hyperparameters[0],
+        #     "aug_method_2": self.augmentation_method_hyperparameters[1],
+        #     "mask_proportion": float(self.augmentation_method_hyperparameters[2]),
+        #     "crop_proportion": float(self.augmentation_method_hyperparameters[3]),
+        #     "reorder_proportion": float(self.augmentation_method_hyperparameters[4]),
+        # }
         result_to_log = {
             "timestamp": datetime.now().isoformat(),
             "best_metrics": self._best_weighted_metrics,
             "best_epochs": self._best_epochs,
-            "hyperparameters": hyperparameters,
+            # "hyperparameters": hyperparameters,
         }
         
         with open(scores_fn, "a", encoding="utf-8") as scores_file:
             json.dump(result_to_log, scores_file, indent=4, ensure_ascii=False)
             scores_file.write("\n" + "=" * 50 + "\n")
         
-        logger.info(f"Augmentation methods 1: {self.augmentation_method_hyperparameters[0]}")
-        logger.info(f"Augmentation methods 2: {self.augmentation_method_hyperparameters[1]}")
-        logger.info(f"Mask proportion: {self.augmentation_method_hyperparameters[2]}")
-        logger.info(f"Crop proportion: {self.augmentation_method_hyperparameters[3]}")
-        logger.info(f"Reorder proportion: {self.augmentation_method_hyperparameters[4]}")
+        # logger.info(f"Augmentation methods 1: {self.augmentation_method_hyperparameters[0]}")
+        # logger.info(f"Augmentation methods 2: {self.augmentation_method_hyperparameters[1]}")
+        # logger.info(f"Mask proportion: {self.augmentation_method_hyperparameters[2]}")
+        # logger.info(f"Crop proportion: {self.augmentation_method_hyperparameters[3]}")
+        # logger.info(f"Reorder proportion: {self.augmentation_method_hyperparameters[4]}")
         logger.info(f"Best weighted metrics: {self._best_weighted_metrics}")
         

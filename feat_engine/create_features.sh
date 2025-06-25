@@ -12,7 +12,7 @@
 
 
 # Create user features
-DATA_DIR="/data/lyjiang/RecSys_Challenge_2025/input/input"
+DATA_DIR="/data/lyjiang/RecSys_Challenge_2025"
 
 python -m feat_engine.user_features.create_user_features \
     --data-dir "${DATA_DIR}" \

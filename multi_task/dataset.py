@@ -38,6 +38,13 @@ from multi_task.constants import (
     QUERY_MAX_VALUE,
     BATCH_SIZE,
     GROUP_SIZE,
+    AUGMENTATION_METHOD_1,
+    AUGMENTATION_METHOD_2,
+    MASK_PROPORTION,
+    CROP_PROPORTION,
+    REORDER_PROPORTION,
+    # USER_FEATURE_AUGMENTATION_METHOD,
+    # USER_FEATURE_MASK_PROPORTION,
 )
 from multi_task.utils import (
     parse_to_array,
@@ -61,6 +68,15 @@ def load_propensity_targets(
     )
     return propensity_targets
 
+
+def load_relevant_clients(
+    data_dir: DataDir,
+) -> np.ndarray:
+    """
+    Load relevant client IDs from the file.
+    """
+    relevant_clients = np.load(data_dir.data_dir / "relevant_clients.npy")
+    return relevant_clients
 
 class BehavioralDataset(Dataset):
     """
@@ -98,14 +114,10 @@ class BehavioralDataset(Dataset):
             self.augmentation_method_1 = augmentation_method_hyperparameters[0]
             self.augmentation_method_2 = augmentation_method_hyperparameters[1]
             self.mask_proportion = float(augmentation_method_hyperparameters[2])
-            self.crop_proportion  = float(augmentation_method_hyperparameters[3])
-            self.reorder_proportion = float(augmentation_method_hyperparameters[4])
         
             logger.info(f"augmentation_method_1: {self.augmentation_method_1}")
             logger.info(f"augmentation_method_2: {self.augmentation_method_2}")
             logger.info(f"mask_proportion: {self.mask_proportion}")
-            logger.info(f"crop_proportion: {self.crop_proportion}")
-            logger.info(f"reorder_proportion: {self.reorder_proportion}")
         
         self.user_features_dict: Dict[int, np.ndarray] = {}
         self.user_features_dim: int
@@ -121,19 +133,21 @@ class BehavioralDataset(Dataset):
         self.chunk_idx: int = -1
         self.chunk_size: int = BATCH_SIZE * GROUP_SIZE
         self.behavior_sequence_chunk: List = []
+        self.behavior_sequence: List = []
         self.client_ids: Set[int] = set()
+        self.relevant_clients = load_relevant_clients(self.data_dir)
         self._behavior_sequence()
         self._load_user_features_dict()
         
-        # self.category_targets = load_propensity_targets(
-        #     self.data_dir, PropensityTasks.PROPENSITY_CATEGORY
-        # )
-        # self.sku_targets = load_propensity_targets(
-        #     self.data_dir, PropensityTasks.PROPENSITY_SKU
-        # )
-        # self.price_targets = load_propensity_targets(
-        #     self.data_dir, PropensityTasks.PROPENSITY_PRICE
-        # )
+        self.category_targets = load_propensity_targets(
+            self.data_dir, PropensityTasks.PROPENSITY_CATEGORY
+        )
+        self.sku_targets = load_propensity_targets(
+            self.data_dir, PropensityTasks.PROPENSITY_SKU
+        )
+        self.price_targets = load_propensity_targets(
+            self.data_dir, PropensityTasks.PROPENSITY_PRICE
+        )
 
     def _load_user_features_dict(self) -> None:
         """
@@ -141,9 +155,9 @@ class BehavioralDataset(Dataset):
         Returns a dictionary with client as the key to features as the value.
         """
         if self.mode == "train":
-            user_features = pd.read_parquet(self.data_dir.input_dir / "user_features.parquet")
+            user_features = pd.read_parquet(self.data_dir.input_dir / "user_features copy.parquet")
         else:
-            user_features = pd.read_parquet(self.data_dir.data_dir / "user_features.parquet")
+            user_features = pd.read_parquet(self.data_dir.data_dir / "user_features copy.parquet")
             
         # Normalize user features
         min_max_scaler = MinMaxScaler()
@@ -157,6 +171,7 @@ class BehavioralDataset(Dataset):
             elif any(key in col for key in [
                 "_count_", "_price_tier_", "_unique_price_tiers", "_unique_categories",
                 "_target_sku_count_", "_unique_target_sku",
+                "_target_category_count_", "_unique_target_categories",
                 "total_active_days", "_activity_trend_ratio",
             ]):
                 user_features[col] = np.log1p(user_features[col], dtype=np.float32)
@@ -248,7 +263,8 @@ class BehavioralDataset(Dataset):
         """
         if self._load_client_ids():
             logger.info("Behavior sequence already loaded, skipping construction.")
-            logger.info(f"Stream load behavior sequence for {len(self.client_ids)} clients")
+            logger.info(f"load behavior sequence for {len(self.client_ids)} clients")
+            self.behavior_sequence = pd.read_parquet(self.sequence_file).to_dict("records")
             return
         
         logger.info(f"Constructing {self.mode} user behavior sequence")
@@ -273,6 +289,18 @@ class BehavioralDataset(Dataset):
 
         all_events_df = pd.concat(all_events)
         # all_events_df = all_events_df.sample(frac=1).head(300000)
+        if self.mode == "train":
+            relevant_clients = set(self.relevant_clients)
+            logger.info(f"Relevant clients loaded: {len(relevant_clients)}")
+            
+            all_client_ids = set(all_events_df["client_id"].unique())
+            logger.info(f"Total unique client_ids in all events: {len(all_client_ids)}")
+            
+            sampled_client_ids = all_client_ids.intersection(relevant_clients)
+            logger.info(f"Sampled client_ids for training: {len(sampled_client_ids)}")
+            
+            all_events_df = all_events_df[all_events_df["client_id"].isin(sampled_client_ids)]
+        
         logger.info(f"Sampled all_events_df length: {len(all_events_df)}")
         all_events_df["timestamp"] = pd.to_datetime(all_events_df["timestamp"])
         all_events_df = all_events_df.sort_values(by=["client_id", "timestamp"])
@@ -309,8 +337,8 @@ class BehavioralDataset(Dataset):
                 ]:
                     sku = int(entity)
                     properties = self.properties_dict[sku]
-                    datetime = timestamp.floor('D')
-                    stat_feat = self.item_stat_feat_dict[sku][datetime]
+                    # datetime = timestamp.floor('D')
+                    # stat_feat = self.item_stat_feat_dict[sku][datetime]
                     sequence_sku_info.append({
                         "sku": sku,
                         "category": properties["category"],
@@ -318,7 +346,7 @@ class BehavioralDataset(Dataset):
                         "name": properties["name"],
                         "event_type": event_type,
                         "timestamp": timestamp,
-                        "features": stat_feat,
+                        # "features": stat_feat,
                     })
                 if event_type == EventTypes.PAGE_VISIT.get_index():
                     url = int(entity)
@@ -390,20 +418,20 @@ class BehavioralDataset(Dataset):
             return sequence
 
         if method == "mask":  # Masking
-            num_mask = max(1, int(len(sequence) * self.mask_proportion))
+            num_mask = max(1, int(len(sequence) * MASK_PROPORTION))
             mask_indices = np.random.choice(len(sequence), num_mask, replace=False)
             for idx in mask_indices:
                 timestamp = sequence[idx]["timestamp"]  # Preserve timestamp
                 sequence[idx] = pad_value.copy()
                 sequence[idx]['timestamp'] = timestamp 
         elif method == "crop":  # Cropping
-            crop_len = max(1, int(len(sequence) * self.crop_proportion))
+            crop_len = max(1, int(len(sequence) * CROP_PROPORTION))
             start_idx = np.random.randint(0, len(sequence) - crop_len + 1)
             sequence = sequence[start_idx:start_idx + crop_len]
         elif method == "reorder":  # Reordering
             if len(sequence) < 2:
                 return sequence
-            reorder_len = max(2, int(len(sequence) * self.reorder_proportion))
+            reorder_len = max(2, int(len(sequence) * REORDER_PROPORTION))
             start_idx = np.random.randint(0, len(sequence) - reorder_len + 1)
             sub_sequence = [event.copy() for event in sequence[start_idx : start_idx + reorder_len]]
             original_timestamps = [event['timestamp'] for event in sub_sequence]
@@ -415,6 +443,27 @@ class BehavioralDataset(Dataset):
             raise ValueError(f"Unknown augmentation method: {method}")
         
         return sequence[-max_length:]
+
+    def _augment_user_features(
+        self,
+        user_features: np.ndarray,
+        method: str,
+    ) -> np.ndarray:
+        """
+        Augment user features based on the specified method.
+        Args:
+            user_features (np.ndarray): The input user features.
+            method (str): The augmentation method to apply.
+        Returns:
+            np.ndarray: Augmented user features.
+        """
+        if method == "mask":
+            num_mask = max(1, int(len(user_features) * self.mask_proportion))
+            mask_indices = np.random.choice(len(user_features), num_mask, replace=False)
+            user_features[mask_indices] = 0.  # Replace masked features with 0
+        else:
+            raise ValueError(f"Unknown augmentation method: {method}")
+        return user_features
 
     def _generate_timestamp_features(self, sequence_entity_info: List[dict]) -> None:
         total_events = len(sequence_entity_info)
@@ -457,16 +506,32 @@ class BehavioralDataset(Dataset):
         if self.mode == "train":
             return (
                 behavior_data[0],
-                self._getitem(idx, is_augmentation=True, augmentation_method=self.augmentation_method_1),
-                self._getitem(idx, is_augmentation=True, augmentation_method=self.augmentation_method_2),
+                self._getitem(
+                    idx, 
+                    is_augmentation=True, 
+                    sequence_augmentation_method=AUGMENTATION_METHOD_1,
+                    # user_features_augmentation_method=self.augmentation_method_1
+                ),
+                self._getitem(
+                    idx, 
+                    is_augmentation=True, 
+                    sequence_augmentation_method=AUGMENTATION_METHOD_2,
+                    # user_features_augmentation_method=self.augmentation_method_2
+                ),
                 behavior_data[1],  # target
             )
         return behavior_data
 
-    def _getitem(self, idx, is_augmentation=False, augmentation_method=None) -> tuple[np.ndarray, np.ndarray]:
-        self._stream_behavior_sequence(idx)
-        chunk_inner_idx = idx % self.chunk_size
-        client_id = self.behavior_sequence_chunk[chunk_inner_idx]["client_id"]
+    def _getitem(
+        self, 
+        idx, 
+        is_augmentation=False, 
+        sequence_augmentation_method=None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # self._stream_behavior_sequence(idx)
+        # chunk_inner_idx = idx % self.chunk_size
+        # client_id = self.behavior_sequence_chunk[chunk_inner_idx]["client_id"]
+        client_id = self.behavior_sequence[idx]["client_id"]
         if not is_augmentation and self.mode == "train":
             target = [
                 target_calculator.compute_target(
@@ -476,9 +541,9 @@ class BehavioralDataset(Dataset):
             ]
 
         # Get the behavior sequence for the client
-        sequence_sku_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_sku"].copy()
-        sequence_url_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_url"].copy()
-        sequence_query_info = self.behavior_sequence_chunk[chunk_inner_idx]["sequence_query"].copy()
+        sequence_sku_info = self.behavior_sequence[idx]["sequence_sku"].copy()
+        sequence_url_info = self.behavior_sequence[idx]["sequence_url"].copy()
+        sequence_query_info = self.behavior_sequence[idx]["sequence_query"].copy()
 
         # Generate timestamp-related features for sequence_sku_info
         self._generate_timestamp_features(sequence_sku_info)
@@ -490,13 +555,13 @@ class BehavioralDataset(Dataset):
 
         if is_augmentation:
             sequence_sku_info = self._augment_sequence(
-                sequence_sku_info, PAD_SKU, MAX_SEQUENCE_LENGTH, augmentation_method
+                sequence_sku_info, PAD_SKU, MAX_SEQUENCE_LENGTH, sequence_augmentation_method
             )
             sequence_url_info = self._augment_sequence(
-                sequence_url_info, PAD_URL, MAX_SEQUENCE_LENGTH, augmentation_method
+                sequence_url_info, PAD_URL, MAX_SEQUENCE_LENGTH, sequence_augmentation_method
             )
             sequence_query_info = self._augment_sequence(
-                sequence_query_info, PAD_QUERY, MAX_SEQUENCE_LENGTH, augmentation_method
+                sequence_query_info, PAD_QUERY, MAX_SEQUENCE_LENGTH, sequence_augmentation_method
             )
 
         sequence_sku_length = min(len(sequence_sku_info), MAX_SEQUENCE_LENGTH)

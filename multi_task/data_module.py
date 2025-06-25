@@ -86,10 +86,10 @@ class BehavioralDataModule(pl.LightningDataModule):
                 mode="train",
                 augmentation_method_hyperparameters=self.augmentation_method_hyperparameters,
             )
-            self.train_sampler = ChunkedShuffleSampler(
-                dataset_size=len(self.train_data),
-                chunk_size=BATCH_SIZE * GROUP_SIZE,
-            )
+            # self.train_sampler = ChunkedShuffleSampler(
+            #     dataset_size=len(self.train_data),
+            #     chunk_size=BATCH_SIZE * GROUP_SIZE,
+            # )
 
             logger.info("Constructing validation dataset")
             self.validation_data = BehavioralDataset(
@@ -103,10 +103,10 @@ class BehavioralDataModule(pl.LightningDataModule):
                 mode="validation",
                 augmentation_method_hyperparameters=None,  # No augmentation for validation
             )
-            self.validation_sampler = ChunkedShuffleSampler(
-                dataset_size=len(self.validation_data),
-                chunk_size=BATCH_SIZE * GROUP_SIZE,
-            )
+            # self.validation_sampler = ChunkedShuffleSampler(
+            #     dataset_size=len(self.validation_data),
+            #     chunk_size=BATCH_SIZE * GROUP_SIZE,
+            # )
             
             # Release memory
             self.properties_dict.clear()
@@ -164,7 +164,7 @@ class BehavioralDataModule(pl.LightningDataModule):
             self.train_data, 
             batch_size=self.batch_size, 
             num_workers=self.num_workers,
-            sampler=self.train_sampler,
+            shuffle=True,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -172,7 +172,7 @@ class BehavioralDataModule(pl.LightningDataModule):
             self.validation_data,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            sampler=self.validation_sampler,
+            # sampler=self.validation_sampler,
         )
 
 class ChunkedShuffleSampler(Sampler[int]):
